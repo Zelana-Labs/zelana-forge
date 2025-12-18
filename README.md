@@ -1,2 +1,75 @@
 # zelana-forge
 Prover layer of Zelana
+
+## Installation
+```
+rustup install stable
+rustup toolchain install nightly --component rust-src
+
+cargo install bpf-linker
+
+cargo install cargo-generate
+```
+
+## Example packet
+```java
+BYTE OFFSET (DEC/HEX) →
+0/0x00                                                                                                     42/0x2A+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                             ETHERNET HEADER (14 B)                                            │
+│                                                                                                               │
+│  [0..5]   dst MAC  = 9a:ae:18:8e:7a:5e                                                                        │
+│  [6..11]  src MAC  = 7a:11:22:33:44:55                                                                        │
+│  [12..13] EtherType= 0x0800 (IPv4)                                                                            │
+│                                                                                                               │
+│  Raw: 9a ae 18 8e 7a 5e  7a 11 22 33 44 55  08 00                                                             │
+│                                                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                         IPv4 HEADER (IHL×4 = 20 B)                                      │  │
+│  │  starts at ip_off = 14 (0x0E)                                                                           │  │
+│  │                                                                                                         │  │
+│  │  [14]   Version/IHL = 0x45  → version=4, IHL=5 → ihl_bytes=20                                           │  │
+│  │  [15]   DSCP/ECN    = 0x00                                                                              │  │
+│  │  [16..17] Total Len = 0x003c                                                                            │  │
+│  │  [18..19] ID        = 0x1234                                                                            │  │
+│  │  [20..21] Flags/Frag= 0x4000 (DF)                                                                       │  │
+│  │  [22]   TTL         = 64                                                                                │  │
+│  │  [23]   Protocol    = 17 (UDP)  ✅ this is your `if ip.protocol != IPPROTO_UDP { PASS }`                │  │
+│  │  [24..25] Checksum  = 0xabcd                                                                            │  │
+│  │  [26..29] Src IP    = 10.200.1.2                                                                        │  │
+│  │  [30..33] Dst IP    = 10.200.1.1                                                                        │  │
+│  │                                                                                                         │  │
+│  │  Raw: 45 00 00 3c 12 34 40 00 40 11 ab cd 0a c8 01 02 0a c8 01 01                                       │  │
+│  │                                                                                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │
+│  │  │                                           UDP HEADER (8 B)                                        │  │  │
+│  │  │  starts at udp_off = ip_off + ihl_bytes = 14 + 20 = 34 (0x22)                                     │  │  │
+│  │  │                                                                                                   │  │  │
+│  │  │  [34..35] Src port = 54321 (0xD431)                                                               │  │  │
+│  │  │  [36..37] Dst port = 53    (0x0035)  ✅ this is your `if dst_port == 53 { DROP }`                 │  │  │
+│  │  │  [38..39] Length   = 0x0028                                                                       │  │  │
+│  │  │  [40..41] Checksum = 0xbeef                                                                       │  │  │
+│  │  │                                                                                                   │  │  │
+│  │  │  Raw: d4 31 00 35 00 28 be ef                                                                     │  │  │
+│  │  │                                                                                                   │  │  │
+│  │  │  ┌──────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │
+│  │  │  │                                            DNS PAYLOAD                                       │ │  │  │
+│  │  │  │  starts at dns_off = udp_off + 8 = 42 (0x2A)                                                 │ │  │  │
+│  │  │  │                                                                                              │ │  │  │
+│  │  │  │  TxID=0x1a2b  Flags=0x0100  QD=1 AN=0 NS=0 AR=0                                              │ │  │  │
+│  │  │  │  QNAME: 03 'www' 06 'google' 03 'com' 00                                                     │ │  │  │
+│  │  │  │  QTYPE: A (0x0001)  QCLASS: IN (0x0001)                                                      │ │  │  │
+│  │  │  │                                                                                              │ │  │  │
+│  │  │  │  Raw: 1a 2b 01 00 00 01 00 00 00 00 00 00                                                    │ │  │  │
+│  │  │  │       03 77 77 77 06 67 6f 6f 67 6c 65 03 63 6f 6d 00                                        │ │  │  │
+│  │  │  │       00 01 00 01                                                                            │ │  │  │
+│  │  │  └──────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │
+│  │  └───────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Resources
+
+- Ethertypes: https://standards-oui.ieee.org/ethertype/eth.txt
+- Protocol numbers: https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml

@@ -1,0 +1,17 @@
+[workspace]
+members = ["af_xdp", "dpdk"]
+resolver = "2"
+
+cargo-features = ["panic-immediate-abort"]
+
+[workspace.dependencies]
+aya = { git = "https://github.com/aya-rs/aya" }
+aya-ebpf = "0.1.1"
+aya-log = { git = "https://github.com/aya-rs/aya" }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
