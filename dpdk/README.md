@@ -1,7 +1,8 @@
 
-
+```
 sudo apt update
-sudo apt install -y dpdk dpdk-dev dpdk-doc dpdk-tools
+sudo apt install -y dpdk dpdk-dev
+```
 
 Yes — you *can* test it, but you need to understand two hard truths about your current DPDK Rust snippet:
 
