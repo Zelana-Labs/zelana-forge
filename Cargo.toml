@@ -1,5 +1,5 @@
 [workspace]
-members = ["af_xdp"]
+members = ["af_xdp", "prover"]
 resolver = "2"
 
 cargo-features = ["panic-immediate-abort"]
