@@ -1,0 +1,30 @@
+# Dockerfile for prover-node
+FROM rust:1.87 as builder
+
+WORKDIR /app
+
+# Copy workspace files
+COPY /Cargo.toml ./Cargo.toml
+COPY /prover-core ./prover-core
+COPY /prover-network ./prover-network
+COPY /prover-coordinator ./prover-coordinator
+COPY /prover-node ./prover-node
+
+# Build the node binary
+RUN cargo build --release -p prover-node
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/prover-node /usr/local/bin/prover-node
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD [ "/usr/local/bin/prover-node", "--help" ] || exit 1
+
+ENTRYPOINT ["/usr/local/bin/prover-node"]

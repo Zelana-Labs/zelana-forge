@@ -22,7 +22,9 @@ use aya_ebpf::{
 
 use core::mem;
 
+//IPv4
 const ETH_P_IP: u16 = 0x0800;
+
 const IPPROTO_UDP: u8 = 17;
 
 #[repr(C)]
@@ -74,12 +76,14 @@ pub fn xdp_drop_dns(ctx: XdpContext) -> u32 {
 }
 
 fn try_xdp_drop_dns(ctx: &XdpContext) -> Result<u32, ()> {
+    // Check if ether type is IPv4
     let eth = unsafe { &*ptr_at::<EthHdr>(ctx, 0).ok_or(())? };
     let ethertype = u16::from_be(eth.ethertype);
     if ethertype != ETH_P_IP {
         return Ok(xdp_action::XDP_PASS);
     }
 
+    // Check if protocol is UDP
     let ip_off = mem::size_of::<EthHdr>();
     let ip = unsafe { &*ptr_at::<Ipv4Hdr>(ctx, ip_off).ok_or(())? };
     if ip.protocol != IPPROTO_UDP {

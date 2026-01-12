@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # Prover nodes (5 nodes)
+  node1:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.node
+    container_name: prover-node-1
+    environment:
+      - NODE_ID=1
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_node=info
+    ports:
+      - "3001:3000"
+    networks:
+      - prover-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node2:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.node
+    container_name: prover-node-2
+    environment:
+      - NODE_ID=2
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_node=info
+    ports:
+      - "3002:3000"
+    networks:
+      - prover-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node3:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.node
+    container_name: prover-node-3
+    environment:
+      - NODE_ID=3
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_node=info
+    ports:
+      - "3003:3000"
+    networks:
+      - prover-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node4:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.node
+    container_name: prover-node-4
+    environment:
+      - NODE_ID=4
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_node=info
+    ports:
+      - "3004:3000"
+    networks:
+      - prover-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node5:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.node
+    container_name: prover-node-5
+    environment:
+      - NODE_ID=5
+      - PORT=3000
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_node=info
+    ports:
+      - "3005:3000"
+    networks:
+      - prover-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Coordinator
+  coordinator:
+    build:
+      context: ../../crates
+      dockerfile: ../deploy/docker/Dockerfile.coordinator
+    container_name: prover-coordinator
+    environment:
+      - THRESHOLD=3
+      - NODES=http://node1:3000,http://node2:3000,http://node3:3000,http://node4:3000,http://node5:3000
+      - PORT=8080
+      - HOST=0.0.0.0
+      - RUST_LOG=prover_coordinator=info
+    ports:
+      - "8080:8080"
+    networks:
+      - prover-network
+    depends_on:
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+      node3:
+        condition: service_healthy
+      node4:
+        condition: service_healthy
+      node5:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+networks:
+  prover-network:
+    driver: bridge
