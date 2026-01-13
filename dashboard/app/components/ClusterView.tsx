@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import HashGenerator from './HashGenerator';
 import type { Node } from '../types';
 
 interface ClusterViewProps {
@@ -62,9 +63,8 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
       </div>
 
       {/* SVG Visualization */}
-      <div className="mb-6 relative">
-        <div className="absolute inset-0 bg-gradient-to-br from-accent-blue/5 to-accent-purple/5 rounded-2xl blur-xl"></div>
-        <svg width="350" height="300" className="mx-auto relative z-10">
+      <div className="mb-6 bg-bg-primary rounded-xl border border-border p-4">
+        <svg width="350" height="300" className="mx-auto">
           <defs>
             <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
@@ -83,6 +83,10 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
           {nodes.map((node, idx) => {
             if (!node.online) return null;
             const pos = nodePositions[idx];
+            const strokeColor = node.ready ? '#10b981' : node.online ? '#f59e0b' : '#6b7280';
+            const strokeWidth = node.ready ? '2.5' : '1.5';
+            const opacity = node.ready ? 0.7 : 0.4;
+
             return (
               <g key={`line-${idx}`}>
                 <line
@@ -90,32 +94,20 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
                   y1={centerY}
                   x2={pos.x}
                   y2={pos.y}
-                  stroke="url(#lineGradient)"
-                  strokeWidth="2"
-                  opacity={node.ready ? 0.8 : 0.3}
+                  stroke={strokeColor}
+                  strokeWidth={strokeWidth}
+                  opacity={opacity}
+                  strokeLinecap="round"
                   className="transition-all duration-500"
                 />
-                {node.ready && (
-                  <line
-                    x1={centerX}
-                    y1={centerY}
-                    x2={pos.x}
-                    y2={pos.y}
-                    stroke="#10b981"
-                    strokeWidth="1"
-                    opacity="0.5"
-                    strokeDasharray="4 4"
-                    className="animate-pulse"
-                  />
-                )}
               </g>
             );
           })}
 
-          {/* Particles */}
+          {/* Data Flow Particles */}
           {particles.map(particle => {
             const fromIdx = particle.from;
-            if (particle.to === -1 && fromIdx >= 0) {
+            if (particle.to === -1 && fromIdx >= 0 && fromIdx < nodePositions.length) {
               const from = nodePositions[fromIdx];
               const x = from.x + (centerX - from.x) * particle.progress;
               const y = from.y + (centerY - from.y) * particle.progress;
@@ -124,10 +116,9 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
                   key={particle.id}
                   cx={x}
                   cy={y}
-                  r="3"
+                  r="2.5"
                   fill="#10b981"
-                  filter="url(#glow)"
-                  opacity={1 - particle.progress}
+                  opacity={0.8 * (1 - particle.progress * 0.5)}
                 />
               );
             }
@@ -137,62 +128,70 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
           {/* Nodes */}
           {nodes.map((node, idx) => {
             const pos = nodePositions[idx];
+            const nodeColor = node.ready ? '#10b981' : node.online ? '#3b82f6' : '#6b7280';
+            const statusColor = node.ready ? '#10b981' : node.online ? '#f59e0b' : '#ef4444';
+
             return (
               <g key={`node-${idx}`} className="transition-all duration-500">
-                {/* Outer ring animation */}
+                {/* Outer glow ring for ready nodes */}
                 {node.ready && (
-                  <>
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r="28"
-                      fill="none"
-                      stroke="#10b981"
-                      strokeWidth="2"
-                      opacity="0.3"
-                      className="animate-ping"
-                      style={{ animationDuration: '2s' }}
-                    />
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r="24"
-                      fill="none"
-                      stroke="#10b981"
-                      strokeWidth="1"
-                      opacity="0.5"
-                    />
-                  </>
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r="26"
+                    fill="none"
+                    stroke={nodeColor}
+                    strokeWidth="1.5"
+                    opacity="0.3"
+                    className="animate-pulse"
+                    style={{ animationDuration: '2s' }}
+                  />
                 )}
 
-                {/* Node circle */}
+                {/* Node circle with border */}
                 <circle
                   cx={pos.x}
                   cy={pos.y}
                   r="22"
-                  fill={node.online ? (node.ready ? 'url(#nodeGradient)' : '#3b82f6') : '#404040'}
-                  filter="url(#glow)"
+                  fill="#1e293b"
+                  stroke={nodeColor}
+                  strokeWidth="2.5"
+                  opacity={node.online ? 1 : 0.5}
                   className="transition-all duration-500"
                 />
 
-                {/* Node label */}
+                {/* Node icon/emoji */}
                 <text
                   x={pos.x}
-                  y={pos.y + 5}
+                  y={pos.y + 6}
                   textAnchor="middle"
-                  fill="#ffffff"
-                  fontSize="13"
-                  fontWeight="700"
+                  fontSize="16"
+                  className="transition-all duration-500"
+                >
+                  💻
+                </text>
+
+                {/* Node number label */}
+                <text
+                  x={pos.x}
+                  y={pos.y + 32}
+                  textAnchor="middle"
+                  fill={node.online ? '#94a3b8' : '#6b7280'}
+                  fontSize="9"
+                  fontWeight="600"
+                  className="transition-all duration-500"
                 >
                   N{node.id}
                 </text>
 
-                {/* Status indicator */}
+                {/* Status indicator dot */}
                 <circle
-                  cx={pos.x + 12}
-                  cy={pos.y - 12}
-                  r="4"
-                  fill={node.online ? (node.ready ? '#10b981' : '#f59e0b') : '#ef4444'}
+                  cx={pos.x + 14}
+                  cy={pos.y - 14}
+                  r="5"
+                  fill={statusColor}
+                  stroke="#1e293b"
+                  strokeWidth="1.5"
                   className={node.ready ? 'animate-pulse' : ''}
                 />
               </g>
@@ -212,60 +211,75 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
           </defs>
 
           {coordinatorRunning && (
-            <>
-              <circle
-                cx={centerX}
-                cy={centerY}
-                r="45"
-                fill="none"
-                stroke="#8b5cf6"
-                strokeWidth="2"
-                opacity="0.2"
-                className="animate-ping"
-                style={{ animationDuration: '3s' }}
-              />
-              <circle
-                cx={centerX}
-                cy={centerY}
-                r="38"
-                fill="none"
-                stroke="#8b5cf6"
-                strokeWidth="1"
-                opacity="0.4"
-              />
-            </>
+            <circle
+              cx={centerX}
+              cy={centerY}
+              r="40"
+              fill="none"
+              stroke="#8b5cf6"
+              strokeWidth="1.5"
+              opacity="0.3"
+              className="animate-pulse"
+              style={{ animationDuration: '3s' }}
+            />
           )}
 
           <circle
             cx={centerX}
             cy={centerY}
-            r="32"
-            fill={coordinatorRunning ? 'url(#coordGradient)' : '#404040'}
-            filter="url(#glow)"
+            r="34"
+            fill="#1e293b"
+            stroke={coordinatorRunning ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="3"
+            opacity={coordinatorRunning ? 1 : 0.5}
             className="transition-all duration-500"
           />
 
+          {/* Coordinator icon */}
           <text
             x={centerX}
-            y={centerY - 3}
+            y={centerY + 8}
             textAnchor="middle"
-            fill="#ffffff"
-            fontSize="11"
-            fontWeight="700"
+            fontSize="28"
+            className="transition-all duration-500"
           >
-            COORD
+            🎯
           </text>
-          <text
-            x={centerX}
-            y={centerY + 10}
-            textAnchor="middle"
-            fill="#ffffff"
-            fontSize="9"
-            opacity="0.8"
-          >
-            {coordinatorRunning ? 'ONLINE' : 'OFFLINE'}
-          </text>
+
+          {/* Coordinator status indicator */}
+          {coordinatorRunning && (
+            <circle
+              cx={centerX + 20}
+              cy={centerY - 20}
+              r="5"
+              fill="#8b5cf6"
+              stroke="#1e293b"
+              strokeWidth="2"
+              className="animate-pulse"
+            />
+          )}
         </svg>
+
+        {/* Legend */}
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-4 text-xs">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-accent-green"></div>
+            <span className="text-text-tertiary">Ready</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-accent-yellow"></div>
+            <span className="text-text-tertiary">Starting</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-full bg-accent-red"></div>
+            <span className="text-text-tertiary">Offline</span>
+          </div>
+          <div className="h-4 w-px bg-border mx-1"></div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2.5 h-0.5 bg-accent-green rounded"></div>
+            <span className="text-text-tertiary">Active Link</span>
+          </div>
+        </div>
       </div>
 
       {/* Node List */}
@@ -348,6 +362,12 @@ export default function ClusterView({ nodes, coordinatorRunning }: ClusterViewPr
           </div>
         </div>
       </div>
+
+      {/* Hash Generator Utility */}
+      <div className="mt-4 pt-4 border-t border-border">
+        <HashGenerator />
+      </div>
     </div>
   );
 }
+

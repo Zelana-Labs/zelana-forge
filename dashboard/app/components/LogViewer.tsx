@@ -11,21 +11,26 @@ interface LogViewerProps {
 
 export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) {
   const [selectedSource, setSelectedSource] = useState<'all' | LogEntry['source']>('all');
-  const [selectedContainer, setSelectedContainer] = useState<string | null>(null);
+  const [selectedContainer, setSelectedContainer] = useState<string>('coordinator');
   const [containerLogs, setContainerLogs] = useState('');
   const [fetchingLogs, setFetchingLogs] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const [showModal, setShowModal] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const filteredLogs = selectedSource === 'all'
     ? logs
     : logs.filter(log => log.source === selectedSource);
 
+  // Auto-fetch logs when selected container changes (reduced frequency to prevent glitching)
   useEffect(() => {
-    if (autoScroll && logContainerRef.current) {
-      logContainerRef.current.scrollTop = 0;
+    if (selectedContainer) {
+      fetchContainerLogs(selectedContainer);
+      const interval = setInterval(() => {
+        fetchContainerLogs(selectedContainer);
+      }, 10000); // Refresh every 10 seconds (reduced from 5 to prevent glitching)
+      return () => clearInterval(interval);
     }
-  }, [logs, autoScroll]);
+  }, [selectedContainer]);
 
   const getLogIcon = (type: LogEntry['type']) => {
     switch (type) {
@@ -177,7 +182,7 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
         ) : (
           filteredLogs.map((log, idx) => (
             <div
-              key={idx}
+              key={`${log.timestamp.getTime()}-${idx}`}
               className={`flex items-start gap-2 p-2 rounded-lg border transition-all duration-200 ${getLogColorClasses(log.type)}`}
             >
               <span className="text-base mt-0.5">{getLogIcon(log.type)}</span>
@@ -195,13 +200,42 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
         )}
       </div>
 
-      {/* Container Controls */}
-      <div className="bg-bg-tertiary rounded-lg p-4 mb-4">
-        <h3 className="text-sm font-semibold text-text-primary mb-3">Docker Containers</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {/* Docker Containers & Logs - Combined Card */}
+      <div className="bg-bg-tertiary rounded-lg p-4">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="text-sm font-semibold text-text-primary">🐳 Container Logs</h3>
+          <div className="flex gap-2">
+            <button
+              onClick={() => fetchContainerLogs(selectedContainer)}
+              disabled={fetchingLogs}
+              className="px-3 py-1.5 text-xs bg-accent-blue hover:bg-accent-blue/80 disabled:opacity-50 rounded-lg font-medium transition-all duration-200"
+            >
+              {fetchingLogs ? '⏳' : '🔄'}
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="px-3 py-1.5 text-xs bg-bg-primary hover:bg-accent-purple/20 border border-border rounded-lg font-medium transition-all duration-200"
+            >
+              ⛶
+            </button>
+            <button
+              onClick={() => restartContainer(selectedContainer)}
+              className="px-3 py-1.5 text-xs bg-accent-red hover:bg-accent-red/80 rounded-lg font-medium transition-all duration-200"
+            >
+              ⚡
+            </button>
+          </div>
+        </div>
+
+        {/* Container Selection Tabs */}
+        <div className="flex gap-1 mb-3 p-1 bg-bg-primary rounded-lg overflow-x-auto">
           <button
-            onClick={() => fetchContainerLogs('coordinator')}
-            className="flex items-center justify-center gap-2 px-3 py-2 text-xs bg-bg-primary hover:bg-accent-purple/20 hover:border-accent-purple border border-border rounded-lg font-medium transition-all duration-200"
+            onClick={() => setSelectedContainer('coordinator')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all duration-200 whitespace-nowrap ${
+              selectedContainer === 'coordinator'
+                ? 'bg-accent-purple text-white shadow-md'
+                : 'text-text-secondary hover:text-text-primary hover:bg-bg-secondary'
+            }`}
           >
             <span>🎯</span>
             <span>Coordinator</span>
@@ -209,50 +243,66 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
           {[1, 2, 3, 4, 5].map((nodeId) => (
             <button
               key={nodeId}
-              onClick={() => fetchContainerLogs(`node${nodeId}`)}
-              className="flex items-center justify-center gap-2 px-3 py-2 text-xs bg-bg-primary hover:bg-accent-blue/20 hover:border-accent-blue border border-border rounded-lg font-medium transition-all duration-200"
+              onClick={() => setSelectedContainer(`node${nodeId}`)}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all duration-200 whitespace-nowrap ${
+                selectedContainer === `node${nodeId}`
+                  ? 'bg-accent-blue text-white shadow-md'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-secondary'
+              }`}
             >
               <span>🖥️</span>
-              <span>Node {nodeId}</span>
+              <span>N{nodeId}</span>
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Node Status Summary */}
-      <div className="bg-bg-tertiary rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-text-primary mb-3">Quick Status</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {nodes.map((node) => (
-            <div
-              key={node.id}
-              className={`flex items-center justify-between p-2 bg-bg-primary rounded-lg border transition-all duration-200 ${
-                node.ready ? 'border-accent-green/30' : node.online ? 'border-accent-yellow/30' : 'border-border'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${
-                  node.ready ? 'bg-accent-green animate-pulse' : node.online ? 'bg-accent-yellow' : 'bg-text-tertiary'
-                }`}></span>
-                <span className="font-semibold text-xs">Node {node.id}</span>
+        {/* Logs Display */}
+        <div className="bg-bg-primary rounded-lg p-3 h-80 overflow-y-auto">
+          {fetchingLogs ? (
+            <div className="flex items-center justify-center h-full text-text-secondary">
+              <div className="text-center">
+                <div className="text-2xl mb-2">⏳</div>
+                <p className="text-xs">Loading logs...</p>
               </div>
-              <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${
-                node.ready ? 'bg-accent-green/20 text-accent-green' :
-                node.online ? 'bg-accent-yellow/20 text-accent-yellow' :
-                'bg-text-tertiary/20 text-text-tertiary'
-              }`}>
-                {node.ready ? 'Ready' : node.online ? 'Starting' : 'Offline'}
-              </span>
             </div>
-          ))}
+          ) : parsedContainerLogs.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-text-tertiary">
+              <div className="text-center">
+                <div className="text-2xl mb-2 opacity-50">📄</div>
+                <p className="text-xs">No logs available</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-0.5 font-mono text-xs">
+              {parsedContainerLogs.slice(0, 50).map((logLine) => (
+                <div
+                  key={`${selectedContainer}-${logLine.key}`}
+                  className="flex gap-2 p-1.5 rounded hover:bg-bg-secondary transition-colors"
+                >
+                  <span className={`${logLine.colorClass} flex-shrink-0`}>{logLine.icon}</span>
+                  {logLine.timestamp && (
+                    <span className="text-text-tertiary flex-shrink-0 text-[10px]">
+                      {logLine.timestamp.slice(11, 19)}
+                    </span>
+                  )}
+                  <span className={`${logLine.colorClass} font-semibold flex-shrink-0 text-[10px]`}>
+                    {logLine.level}
+                  </span>
+                  <span className="text-text-primary break-all leading-relaxed text-[11px]">
+                    {logLine.line.replace(/^\[?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\]]*)\]?\s*/, '').replace(/\[32m|\[0m|\[2m|\[31m/g, '')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Container Log Modal */}
-      {selectedContainer && (
+      {showModal && (
         <div
           className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-          onClick={() => setSelectedContainer(null)}
+          onClick={() => setShowModal(false)}
         >
           <div
             className="bg-bg-secondary border border-border rounded-2xl w-full max-w-6xl max-h-[90vh] flex flex-col shadow-2xl"
@@ -281,7 +331,7 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
                   ⚡ Restart
                 </button>
                 <button
-                  onClick={() => setSelectedContainer(null)}
+                  onClick={() => setShowModal(false)}
                   className="px-4 py-2 text-xs bg-bg-tertiary hover:bg-bg-primary rounded-lg font-medium transition-all duration-200"
                 >
                   ✕ Close

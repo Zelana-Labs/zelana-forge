@@ -157,59 +157,41 @@ export default function InteractiveDashboard() {
   return (
     <div className="flex flex-col h-screen bg-bg-primary">
       {/* Header */}
-      <header className="relative bg-gradient-to-r from-bg-secondary via-bg-secondary to-bg-primary border-b border-border/50 flex-shrink-0 overflow-hidden">
-        {/* Animated background */}
-        <div className="absolute inset-0 opacity-30">
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-accent-blue rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-          <div className="absolute top-0 right-1/4 w-96 h-96 bg-accent-purple rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse" style={{ animationDelay: '2s' }}></div>
-        </div>
-
-        <div className="relative z-10 p-6">
-          <div className="flex justify-between items-center max-w-full">
-            <div className="flex items-center gap-4">
-              <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-br from-accent-blue to-accent-purple rounded-2xl blur-xl opacity-50"></div>
-                <div className="relative w-14 h-14 bg-gradient-to-br from-accent-blue to-accent-purple rounded-2xl flex items-center justify-center text-3xl shadow-lg">
-                  ⚡
-                </div>
+      <header className="bg-bg-secondary border-b border-border flex-shrink-0 shadow-sm">
+        <div className="px-6 py-4">
+          <div className="flex justify-between items-center">
+            {/* Logo and Title */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-accent-blue to-accent-purple rounded-lg flex items-center justify-center text-xl shadow-md">
+                ⚡
               </div>
               <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-text-primary via-accent-blue to-accent-purple bg-clip-text text-transparent">
+                <h1 className="text-lg font-bold text-text-primary">
                   Zelana Prover
                 </h1>
-                <p className="text-sm text-text-secondary font-medium mt-0.5">
+                <p className="text-xs text-text-tertiary">
                   Distributed Zero-Knowledge Proof System
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              {/* Status indicator */}
-              <div className="relative">
-                <div className={`absolute inset-0 ${coordinatorRunning && nodesRunning ? 'bg-accent-green' : 'bg-accent-red'} rounded-xl blur-xl opacity-30`}></div>
-                <div className={`relative flex items-center gap-3 px-5 py-3 rounded-xl border backdrop-blur-sm ${
-                  coordinatorRunning && nodesRunning
-                    ? 'bg-accent-green/10 border-accent-green/30'
-                    : 'bg-accent-red/10 border-accent-red/30'
-                }`}>
-                  <div className="relative">
-                    <span className={`relative flex h-3 w-3 ${coordinatorRunning && nodesRunning ? 'opacity-100' : 'opacity-70'}`}>
-                      {coordinatorRunning && nodesRunning && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-green opacity-75"></span>
-                      )}
-                      <span className={`relative inline-flex rounded-full h-3 w-3 ${
-                        coordinatorRunning && nodesRunning ? 'bg-accent-green' : 'bg-accent-red'
-                      }`}></span>
-                    </span>
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-text-primary">
-                      {coordinatorRunning && nodesRunning ? 'System Online' : nodesRunning ? 'Partial' : 'Offline'}
-                    </div>
-                    <div className="text-xs text-text-tertiary">
-                      {nodes.filter(n => n.ready).length}/{nodes.length} nodes ready
-                    </div>
-                  </div>
+            {/* System Stats */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-2 bg-bg-tertiary rounded-lg">
+                <div className="text-xs text-text-secondary">Coordinator:</div>
+                <div className={`flex items-center gap-1.5 ${coordinatorRunning ? 'text-accent-green' : 'text-accent-red'}`}>
+                  <div className={`w-2 h-2 rounded-full ${coordinatorRunning ? 'bg-accent-green animate-pulse' : 'bg-accent-red'}`}></div>
+                  <span className="text-xs font-semibold">{coordinatorRunning ? 'Online' : 'Offline'}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 px-3 py-2 bg-bg-tertiary rounded-lg">
+                <div className="text-xs text-text-secondary">Nodes:</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-accent-green">{nodes.filter(n => n.ready).length}</span>
+                  <span className="text-xs text-text-tertiary">/</span>
+                  <span className="text-xs font-semibold text-text-primary">{nodes.length}</span>
+                  <span className="text-xs text-text-tertiary">Ready</span>
                 </div>
               </div>
 
@@ -217,28 +199,22 @@ export default function InteractiveDashboard() {
               {!coordinatorRunning || !nodesRunning ? (
                 <button
                   onClick={startCluster}
-                  className="relative group px-6 py-3 bg-gradient-to-r from-accent-green to-accent-blue hover:from-accent-green/90 hover:to-accent-blue/90 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="flex items-center gap-2 px-4 py-2 bg-accent-green hover:bg-accent-green/90 rounded-lg font-medium text-sm text-white transition-all duration-200 shadow-md hover:shadow-lg"
                 >
-                  <span className="relative z-10 flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
-                    </svg>
-                    Start Cluster
-                  </span>
-                  <div className="absolute inset-0 bg-gradient-to-r from-accent-green to-accent-blue rounded-xl blur opacity-50 group-hover:opacity-75 transition-opacity"></div>
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                  </svg>
+                  Start Cluster
                 </button>
               ) : (
                 <button
                   onClick={stopCluster}
-                  className="relative group px-6 py-3 bg-gradient-to-r from-accent-red to-accent-yellow hover:from-accent-red/90 hover:to-accent-yellow/90 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl"
+                  className="flex items-center gap-2 px-4 py-2 bg-accent-red hover:bg-accent-red/90 rounded-lg font-medium text-sm text-white transition-all duration-200 shadow-md hover:shadow-lg"
                 >
-                  <span className="relative z-10 flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
-                    </svg>
-                    Stop Cluster
-                  </span>
-                  <div className="absolute inset-0 bg-gradient-to-r from-accent-red to-accent-yellow rounded-xl blur opacity-50 group-hover:opacity-75 transition-opacity"></div>
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                  </svg>
+                  Stop Cluster
                 </button>
               )}
             </div>
