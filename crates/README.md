@@ -12,6 +12,7 @@ Zelana Prover is a production-ready distributed proving system that enables mult
 - **Distributed Schnorr Proofs**: Non-interactive zero-knowledge proofs using Fiat-Shamir heuristic
 - **Fault Tolerant**: Requires only threshold nodes to be online (e.g., 3 out of 5)
 - **Production Ready**: Includes Docker and Kubernetes deployment configurations
+- **Interactive Dashboard**: Beautiful Svelte dashboard with real-time visualization
 - **Type-Safe**: Full Rust implementation with comprehensive error handling
 - **Well-Documented**: Extensive documentation including architecture, protocol, and state machines
 
@@ -26,7 +27,16 @@ The project consists of four main crates:
 
 ## Quick Start
 
-### Local Development
+### Complete System with Dashboard
+
+```bash
+# One command to start everything (backend + dashboard)
+./scripts/start-dev.sh
+```
+
+Then open http://localhost:5173 to access the dashboard!
+
+### Local Development (Backend Only)
 
 ```bash
 # Build all crates
@@ -37,6 +47,14 @@ cargo test --workspace
 
 # Start local test cluster (5 nodes + coordinator)
 ./scripts/test-local.sh
+```
+
+### Dashboard Only
+
+```bash
+cd dashboard
+npm install
+npm run dev
 ```
 
 ### Docker Deployment

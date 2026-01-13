@@ -59,10 +59,29 @@ zelana-prover/
 │   │   └── src/
 │   │       └── main.rs             # HTTP server
 │   │
-│   └── prover-coordinator/         # Coordinator service
+│   ├── prover-coordinator/         # Coordinator service
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       └── main.rs             # Protocol orchestration
+│   │
+│   └── prover-control/             # Docker control server
 │       ├── Cargo.toml
 │       └── src/
-│           └── main.rs             # Protocol orchestration
+│           └── main.rs             # Cluster management API
+│
+├── dashboard/                      # Interactive web dashboard (Next.js)
+│   ├── package.json
+│   ├── next.config.ts              # API proxy configuration
+│   └── app/
+│       ├── page.tsx
+│       ├── layout.tsx
+│       ├── globals.css             # Dark theme (Tailwind v4)
+│       ├── types.ts
+│       └── components/
+│           ├── InteractiveDashboard.tsx
+│           ├── ClusterView.tsx
+│           ├── WorkflowPanel.tsx
+│           └── LogViewer.tsx
 │
 ├── deploy/
 │   ├── docker/
@@ -82,6 +101,7 @@ zelana-prover/
 │           └── configmap.yaml
 │
 ├── scripts/
+│   ├── start-dashboard.sh          # Launch dashboard + control server
 │   ├── test-local.sh               # Local docker-compose test
 │   └── deploy-k8s.sh               # Kubernetes deployment
 │
@@ -97,6 +117,37 @@ zelana-prover/
 
 ## 🚀 Quick Start
 
+### Interactive Dashboard (Recommended)
+
+The easiest way to run the system is using the interactive dashboard:
+
+```bash
+# 1. Launch the dashboard and control server
+./scripts/start-dashboard.sh
+
+# 2. Open your browser
+# Navigate to: http://localhost:5173
+
+# 3. Start the cluster
+# Click "▶ Start Cluster" button in the dashboard
+
+# 4. Run the workflow
+# Follow the 3-step workflow: Setup → Prove → Verify
+```
+
+The dashboard provides:
+- **One-click cluster management** (start/stop Docker Compose)
+- **Live logs** with filtering by source (system/setup/prove/verify)
+- **Container monitoring** with individual log viewing
+- **Visual cluster topology** showing node status
+- **Interactive workflow** with step-by-step guidance
+
+**Ports:**
+- Dashboard: http://localhost:5173
+- Control Server: http://localhost:9000
+- Coordinator: http://localhost:8000
+- Nodes: http://localhost:3001-3005
+
 ### Local Development (Docker Compose)
 
 ```bash
@@ -109,7 +160,7 @@ cd scripts
 ./test-local.sh
 ```
 
-### Manual Testing
+### Manual Testing (API)
 
 ```bash
 # 1. Health check
@@ -118,17 +169,17 @@ curl http://localhost:8000/health
 # 2. Setup: distribute secret shares
 curl -X POST http://localhost:8000/setup \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"threshold": 3, "total_nodes": 5}'
 
 # 3. Generate proof
 curl -X POST http://localhost:8000/prove \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
 
 # 4. Verify proof (use proof from step 3)
 curl -X POST http://localhost:8000/verify \
   -H "Content-Type: application/json" \
-  -d '{"commitment":"...","challenge":"...","response":"..."}'
+  -d '{"proof": {...}}'
 ```
 
 ### Kubernetes Deployment

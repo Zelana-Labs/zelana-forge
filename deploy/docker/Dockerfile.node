@@ -4,11 +4,10 @@ FROM rust:1.87 as builder
 WORKDIR /app
 
 # Copy workspace files
-COPY /Cargo.toml ./Cargo.toml
-COPY /prover-core ./prover-core
-COPY /prover-network ./prover-network
-COPY /prover-coordinator ./prover-coordinator
-COPY /prover-node ./prover-node
+COPY Cargo.toml ./Cargo.toml
+COPY af_xdp ./af_xdp
+COPY prover ./prover
+COPY crates ./crates
 
 # Build the node binary
 RUN cargo build --release -p prover-node
@@ -18,13 +17,11 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/prover-node /usr/local/bin/prover-node
 
-EXPOSE 3000
-
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD [ "/usr/local/bin/prover-node", "--help" ] || exit 1
+EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/prover-node"]

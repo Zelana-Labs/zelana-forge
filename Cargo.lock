@@ -1340,6 +1340,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "prover-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "prover-coordinator"
 version = "0.1.0"
 dependencies = [

@@ -5,6 +5,7 @@ members = [
     "prover-network",
     "prover-node",
     "prover-coordinator",
+    "prover-control",
 ]
 
 [workspace.package]

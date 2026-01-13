@@ -4,11 +4,10 @@ FROM rust:1.87 as builder
 WORKDIR /app
 
 # Copy workspace files
-COPY /Cargo.toml ./Cargo.toml
-COPY /prover-core ./prover-core
-COPY /prover-network ./prover-network
-COPY /prover-node ./prover-node
-COPY /prover-coordinator ./prover-coordinator
+COPY Cargo.toml ./Cargo.toml
+COPY af_xdp ./af_xdp
+COPY prover ./prover
+COPY crates ./crates
 
 # Build the coordinator binary
 RUN cargo build --release -p prover-coordinator
@@ -24,8 +23,5 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /app/target/release/prover-coordinator /usr/local/bin/prover-coordinator
 
 EXPOSE 8080
-
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/usr/local/bin/prover-coordinator"]
