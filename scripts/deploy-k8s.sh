@@ -49,26 +49,18 @@ echo ""
 
 # Build Docker images
 echo "==> Building Docker images..."
-cd "$PROJECT_ROOT/crates"
+cd "$PROJECT_ROOT"  # Use project root as build context
 
 echo "Building prover-node image..."
-docker build -f ../deploy/docker/Dockerfile.node -t zelana/prover-node:latest .
+docker build -f deploy/docker/Dockerfile.node -t zelana/prover-node:latest .
 echo -e "${GREEN}✓ prover-node image built${NC}"
 
 echo "Building prover-coordinator image..."
-docker build -f ../deploy/docker/Dockerfile.coordinator -t zelana/prover-coordinator:latest .
+docker build -f deploy/docker/Dockerfile.coordinator -t zelana/prover-coordinator:latest .
 echo -e "${GREEN}✓ prover-coordinator image built${NC}"
 echo ""
 
-# Optionally push to registry (commented out by default)
-# echo "==> Pushing images to registry..."
-# docker tag zelana/prover-node:latest your-registry/zelana/prover-node:latest
-# docker tag zelana/prover-coordinator:latest your-registry/zelana/prover-coordinator:latest
-# docker push your-registry/zelana/prover-node:latest
-# docker push your-registry/zelana/prover-coordinator:latest
-# echo ""
-
-# For local clusters (minikube, kind), load images directly
+# Load images into local cluster if needed
 if command_exists minikube && minikube status &> /dev/null; then
     echo "==> Loading images into minikube..."
     minikube image load zelana/prover-node:latest
@@ -97,7 +89,7 @@ echo "Waiting for namespace..."
 kubectl wait --for=jsonpath='{.status.phase}'=Active namespace/zelana-prover --timeout=30s
 echo -e "${GREEN}✓ Namespace ready${NC}"
 
-echo "Waiting for nodes..."
+echo "Waiting for prover nodes..."
 kubectl wait --for=condition=ready pod -l app=prover-node -n zelana-prover --timeout=120s
 echo -e "${GREEN}✓ Prover nodes ready${NC}"
 
@@ -116,8 +108,7 @@ echo "Services:"
 kubectl get services -n zelana-prover
 echo ""
 
-# Get coordinator service info
-COORDINATOR_SERVICE=$(kubectl get service coordinator -n zelana-prover -o jsonpath='{.metadata.name}')
+# Coordinator info
 echo -e "${GREEN}==> Deployment complete!${NC}"
 echo ""
 echo "To access the coordinator:"
