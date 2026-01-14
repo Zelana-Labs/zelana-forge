@@ -43,38 +43,28 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
   const [proofData, setProofData] = useState<ProofData | null>(null);
   const [verifyResult, setVerifyResult] = useState<boolean | null>(null);
 
-  // Circuit inputs - dynamic based on selected circuit
   const [circuitInputs, setCircuitInputs] = useState<CircuitSetupInputs>({});
   const [selectedCircuit, setSelectedCircuit] = useState<string>('schnorr');
 
-  // Extra data from circuit processing (e.g., computed target hash)
   const [circuitExtraData, setCircuitExtraData] = useState<Record<string, unknown>>({});
 
-  // Blind proving state
   const [salt, setSalt] = useState<Uint8Array | null>(null);
   const [sessionId, setSessionId] = useState<string>('');
   const [shares, setShares] = useState<ShareInfo[]>([]);
   const [publicWitness, setPublicWitness] = useState<string>('');
 
-  // Request/Response tracking
   const [requestResponses, setRequestResponses] = useState<Record<number, RequestResponse>>({});
 
-  // Collapsible sections
   const [showPrivacyDetails, setShowPrivacyDetails] = useState(false);
 
-  // Get all circuits from registry
   const circuits = getAllCircuits();
-
-  // Get current circuit handler
   const currentHandler = getCircuitHandler(selectedCircuit);
   const currentMetadata = getCircuitMetadata(selectedCircuit);
 
-  // Handle circuit input change
   const handleInputChange = (fieldId: string, value: string) => {
     setCircuitInputs(prev => ({ ...prev, [fieldId]: value }));
   };
 
-  // Reset inputs when circuit changes
   const handleCircuitChange = (circuitId: string) => {
     setSelectedCircuit(circuitId);
     setCircuitInputs({});
@@ -328,40 +318,38 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
           value={value}
           onChange={(e) => handleInputChange(field.id, e.target.value)}
           placeholder={field.placeholder}
-          className={`w-full px-2 py-1.5 bg-bg-primary border ${borderColor} rounded text-[11px] ${
-            field.type === 'hex' ? 'font-mono' : ''
-          } text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 ${focusRing}`}
+          className={`w-full px-2 py-1.5 bg-bg-primary border ${borderColor} rounded text-[11px] ${field.type === 'hex' ? 'font-mono' : ''
+            } text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 ${focusRing}`}
           disabled={loading !== null}
         />
       </div>
     );
   };
 
-  // Compact request/response preview
   const renderRequestResponse = (stepId: number) => {
     const data = requestResponses[stepId];
     if (!data) return null;
 
     return (
-      <details className="mt-2 text-[10px]">
+      <div className="text-[10px] mt-3">
         <summary className="cursor-pointer text-text-tertiary hover:text-text-secondary">
-          📡 API Details
+          📡 API details
         </summary>
-        <div className="mt-1 grid grid-cols-2 gap-2">
+        <div className="mt-2 grid grid-cols-2 gap-2">
           <div className="bg-bg-tertiary rounded p-2">
             <div className="text-accent-blue font-semibold mb-1">Request</div>
-            <pre className="text-[9px] font-mono overflow-x-auto max-h-20 text-text-secondary">
+            <pre className="text-[9px] font-mono overflow-x-auto max-h-35 text-text-secondary">
               {JSON.stringify(data.request, null, 1)}
             </pre>
           </div>
           <div className="bg-bg-tertiary rounded p-2">
             <div className="text-accent-green font-semibold mb-1">Response</div>
-            <pre className="text-[9px] font-mono overflow-x-auto max-h-20 text-text-secondary">
+            <pre className="text-[9px] font-mono overflow-x-auto max-h-35 text-text-secondary">
               {JSON.stringify(data.response, null, 1)}
             </pre>
           </div>
         </div>
-      </details>
+      </div>
     );
   };
 
@@ -385,17 +373,16 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
           </div>
         </div>
 
-        {/* Circuit Selector - Compact */}
+        {/* Circuit Selector */}
         <div className="flex gap-1 mb-4">
           {circuits.filter(c => c.status === 'active' || c.status === 'ui-only').map((circuit) => (
             <button
               key={circuit.id}
               onClick={() => handleCircuitChange(circuit.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
-                selectedCircuit === circuit.id
-                  ? 'bg-accent-blue text-white'
-                  : 'bg-bg-tertiary text-text-secondary hover:bg-bg-secondary'
-              }`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${selectedCircuit === circuit.id
+                ? 'bg-accent-blue text-white'
+                : 'bg-bg-tertiary text-text-secondary hover:bg-bg-secondary'
+                }`}
             >
               <span>{circuit.icon}</span>
               <span>{circuit.name}</span>
@@ -403,7 +390,7 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
           ))}
         </div>
 
-        {/* Circuit Info - Compact */}
+        {/* Circuit Info */}
         {currentMetadata && (
           <div className="mb-4 bg-bg-secondary rounded-lg p-3 border border-border">
             <div className="flex items-center gap-2 mb-2">
@@ -429,8 +416,8 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
           </div>
         )}
 
-        {/* Main Workflow Grid - Steps side by side */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        {/* Main Workflow - Steps */}
+        <div className="grid grid-cols-1 gap-3 mb-4">
           {steps.map((step) => {
             const isCompleted = completedSteps.includes(step.id);
             const isCurrent = currentStep === step.id;
@@ -439,162 +426,164 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
             return (
               <div
                 key={step.id}
-                className={`rounded-lg p-3 border transition-all ${
-                  isCompleted ? 'bg-accent-green/5 border-accent-green/30' :
-                  isCurrent ? 'bg-accent-blue/5 border-accent-blue/30' :
-                  'bg-bg-secondary border-border'
-                }`}
-              >
-                {/* Step Header */}
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                    isCompleted ? 'bg-accent-green text-white' :
-                    isCurrent ? 'bg-accent-blue text-white' :
-                    'bg-bg-tertiary text-text-tertiary'
-                  }`}>
-                    {isCompleted ? '✓' : step.id + 1}
-                  </div>
-                  <span className="text-sm font-semibold text-text-primary">{step.title}</span>
-                  <span className="text-lg">{step.icon}</span>
-                </div>
-
-                {/* Step Content */}
-                <div className="min-h-[120px]">
-                  {/* Setup Step */}
-                  {step.id === 0 && currentHandler && (
-                    <div className="space-y-2">
-                      {currentHandler.setupFields.map(field => renderInputField(field))}
-                    </div>
-                  )}
-
-                  {/* Prove Step */}
-                  {step.id === 1 && (
-                    <div className="text-[10px] text-text-secondary space-y-1">
-                      {setupData ? (
-                        <>
-                          <div className="flex justify-between">
-                            <span>Threshold:</span>
-                            <span className="font-mono text-text-primary">{setupData.threshold}/{setupData.num_nodes}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Session:</span>
-                            <span className="font-mono text-text-primary truncate max-w-[100px]">{sessionId.substring(0, 16)}...</span>
-                          </div>
-                          {currentHandler?.proveFields?.map(field => {
-                            const value = circuitExtraData[field.id] as string || '';
-                            return value && (
-                              <div key={field.id} className="flex justify-between">
-                                <span>{field.label.split(':')[0]}:</span>
-                                <span className="font-mono text-text-primary truncate max-w-[100px]">{value.substring(0, 16)}...</span>
-                              </div>
-                            );
-                          })}
-                        </>
-                      ) : (
-                        <div className="text-text-tertiary">Complete setup first</div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Verify Step */}
-                  {step.id === 2 && (
-                    <div className="text-[10px] text-text-secondary space-y-1">
-                      {proofData ? (
-                        <>
-                          <div className="flex justify-between">
-                            <span>Commitment:</span>
-                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.commitment.substring(1, 17)}...</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Challenge:</span>
-                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.challenge.substring(0, 16)}...</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>Response:</span>
-                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.response.substring(0, 16)}...</span>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-text-tertiary">Generate proof first</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Action Button */}
-                <button
-                  onClick={() => handleStepAction(step.id)}
-                  disabled={!isAvailable || loading !== null || !isCircuitActive(selectedCircuit)}
-                  className={`w-full mt-2 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-                    !isAvailable || loading !== null || !isCircuitActive(selectedCircuit)
-                      ? 'bg-bg-tertiary text-text-tertiary cursor-not-allowed'
-                      : isCompleted
-                      ? 'bg-accent-green hover:bg-accent-green/80 text-white'
-                      : 'bg-accent-blue hover:bg-accent-blue/80 text-white'
+                className={`rounded-lg p-3 border transition-all ${isCompleted
+                  ? 'bg-accent-green/5 border-accent-green/30'
+                  : isCurrent
+                    ? 'bg-accent-blue/5 border-accent-blue/30'
+                    : 'bg-bg-secondary border-border'
                   }`}
-                >
-                  {loading === step.id ? '⏳ Processing...' : isCompleted ? '↻ Re-run' : `▶ Run`}
-                </button>
+              >
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {/* Left side - Main content */}
+                  <div className="flex-1 min-w-0">
+                    {/* Step Header */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <div
+                        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${isCompleted
+                          ? 'bg-accent-green text-white'
+                          : isCurrent
+                            ? 'bg-accent-blue text-white'
+                            : 'bg-bg-tertiary text-text-tertiary'
+                          }`}
+                      >
+                        {isCompleted ? '✓' : step.id + 1}
+                      </div>
+                      <span className="text-sm font-semibold text-text-primary">{step.title}</span>
+                      <span className="text-lg">{step.icon}</span>
+                    </div>
 
-                {/* Result Badge */}
-                {step.id === 2 && verifyResult !== null && (
-                  <div className={`mt-2 py-1 px-2 rounded text-center text-xs font-semibold ${
-                    verifyResult ? 'bg-accent-green/20 text-accent-green' : 'bg-accent-red/20 text-accent-red'
-                  }`}>
-                    {verifyResult ? '✓ Valid' : '✗ Invalid'}
+                    {/* Step Content */}
+                    <div className="min-h-[120px]">
+                      {step.id === 0 && currentHandler && (
+                        <div className="space-y-2">
+                          {currentHandler.setupFields.map(field => renderInputField(field))}
+                        </div>
+                      )}
+
+                      {step.id === 1 && (
+                        <div className="text-[10px] text-text-secondary space-y-1">
+                          {setupData ? (
+                            <>
+                              <div className="flex justify-between">
+                                <span>Threshold:</span>
+                                <span className="font-mono text-text-primary">{setupData.threshold}/{setupData.num_nodes}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Session:</span>
+                                <span className="font-mono text-text-primary truncate max-w-[100px]">{sessionId.substring(0, 16)}...</span>
+                              </div>
+                              {currentHandler?.proveFields?.map(field => {
+                                const value = circuitExtraData[field.id] as string || '';
+                                return value && (
+                                  <div key={field.id} className="flex justify-between">
+                                    <span>{field.label.split(':')[0]}:</span>
+                                    <span className="font-mono text-text-primary truncate max-w-[100px]">{value.substring(0, 16)}...</span>
+                                  </div>
+                                );
+                              })}
+                            </>
+                          ) : (
+                            <div className="text-text-tertiary">Complete setup first</div>
+                          )}
+                        </div>
+                      )}
+
+                      {step.id === 2 && (
+                        <div className="text-[10px] text-text-secondary space-y-1">
+                          {proofData ? (
+                            <>
+                              <div className="flex justify-between">
+                                <span>Commitment:</span>
+                                <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.commitment.substring(1, 17)}...</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Challenge:</span>
+                                <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.challenge.substring(0, 16)}...</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Response:</span>
+                                <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.response.substring(0, 16)}...</span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-text-tertiary">Generate proof first</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Button */}
+                    <button
+                      onClick={() => handleStepAction(step.id)}
+                      disabled={!isAvailable || loading !== null || !isCircuitActive(selectedCircuit)}
+                      className={`w-full mt-3 px-3 py-1.5 rounded text-xs font-medium transition-all ${!isAvailable || loading !== null || !isCircuitActive(selectedCircuit)
+                        ? 'bg-bg-tertiary text-text-tertiary cursor-not-allowed'
+                        : isCompleted
+                          ? 'bg-accent-green hover:bg-accent-green/80 text-white'
+                          : 'bg-accent-blue hover:bg-accent-blue/80 text-white'
+                        }`}
+                    >
+                      {loading === step.id ? '⏳ Processing...' : isCompleted ? '↻ Re-run' : `▶ Run`}
+                    </button>
+
+                    {/* Result Badge */}
+                    {step.id === 2 && verifyResult !== null && (
+                      <div
+                        className={`mt-2 py-1 px-2 rounded text-center text-xs font-semibold ${verifyResult ? 'bg-accent-green/20 text-accent-green' : 'bg-accent-red/20 text-accent-red'
+                          }`}
+                      >
+                        {verifyResult ? '✓ Valid' : '✗ Invalid'}
+                      </div>
+                    )}
                   </div>
-                )}
 
-                {/* Inline Request/Response */}
-                {renderRequestResponse(step.id)}
+                  {/* Right side - API Details */}
+                  <div className="w-full sm:w-200 shrink-0">
+                    {renderRequestResponse(step.id)}
+                  </div>
+                </div>
               </div>
             );
           })}
         </div>
+        {/* Privacy Details */}
+        <div className="mb-4">
+          <summary
+            className="cursor-pointer text-sm font-semibold text-accent-purple flex items-center gap-2 mb-2"
+          >
+            🛡️ Blind Proving Details
+          </summary>
 
-        {/* Privacy Details - Collapsible */}
-        {setupData && shares.length > 0 && (
-          <details className="mb-4" open={showPrivacyDetails}>
-            <summary
-              className="cursor-pointer text-sm font-semibold text-accent-purple flex items-center gap-2 mb-2"
-              onClick={() => setShowPrivacyDetails(!showPrivacyDetails)}
-            >
-              🛡️ Blind Proving Details
-              <span className="text-[10px] text-text-tertiary font-normal">(click to expand)</span>
-            </summary>
-
-            <div className="bg-gradient-to-br from-purple-900/10 to-blue-900/10 border border-purple-500/30 rounded-lg p-3">
-              {/* Node Distribution - Compact */}
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {shares.map((share) => (
-                  <div key={share.node_id} className="bg-bg-primary/50 rounded p-2 text-center">
-                    <div className="w-6 h-6 mx-auto bg-purple-600 rounded-full flex items-center justify-center text-white text-xs font-bold mb-1">
-                      {share.node_id}
-                    </div>
-                    <div className="text-[9px] text-text-secondary">Share #{share.share_index}</div>
-                    <div className="text-[8px] text-purple-300">🛡️ Witness Hidden</div>
+          <div className="bg-gradient-to-br from-purple-900/10 to-blue-900/10 border border-purple-500/30 rounded-lg p-3">
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              {shares.map((share) => (
+                <div key={share.node_id} className="bg-bg-primary/50 rounded p-2 text-center">
+                  <div className="w-6 h-6 mx-auto bg-purple-600 rounded-full flex items-center justify-center text-white text-xs font-bold mb-1">
+                    {share.node_id}
                   </div>
-                ))}
-              </div>
+                  <div className="text-[9px] text-text-secondary">Share #{share.share_index}</div>
+                  <div className="text-[8px] text-purple-300">🛡️ Witness Hidden</div>
+                </div>
+              ))}
+            </div>
 
-              {/* Privacy Guarantee */}
-              <div className="text-[10px] text-text-secondary space-y-1">
-                <div className="flex items-center gap-1">
-                  <span className="text-purple-400">✓</span>
-                  <span>Public witness <span className="font-semibold text-text-primary">"{publicWitness}"</span> never sent to nodes</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-purple-400">✓</span>
-                  <span>Nodes only receive commitment hash + secret share</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-purple-400">✓</span>
-                  <span>Witness revealed only at verification time</span>
-                </div>
+            <div className="text-[10px] text-text-secondary space-y-1">
+              <div className="flex items-center gap-1">
+                <span className="text-purple-400">✓</span>
+                <span>Public witness <span className="font-semibold text-text-primary">"{publicWitness}"</span> never sent to nodes</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-purple-400">✓</span>
+                <span>Nodes only receive commitment hash + secret share</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-purple-400">✓</span>
+                <span>Witness revealed only at verification time</span>
               </div>
             </div>
-          </details>
-        )}
+          </div>
+        </div>
+
       </div>
     </div>
   );
