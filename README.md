@@ -1,270 +1,164 @@
-# Zelana Distributed Prover
+# Zelana Forge
 
-A distributed zero-knowledge proof system where **no single node knows the complete secret**. Uses Shamir's Secret Sharing and threshold cryptography to enable privacy-preserving collaborative proving.
+A distributed zero-knowledge proof system with **blind proving** - no single node knows the complete secret, and provers never see the public witness until verification.
 
-## 🎯 Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         DISTRIBUTED PROVER NETWORK                       │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                          ┌──────────────────┐                            │
-│                          │   COORDINATOR    │                            │
-│                          │                  │                            │
-│                          │  • Orchestrates  │                            │
-│                          │  • No secrets    │                            │
-│                          │  • Aggregates    │                            │
-│                          └────────┬─────────┘                            │
-│                                   │                                      │
-│            ┌──────────────────────┼──────────────────────┐               │
-│            │                      │                      │               │
-│       ┌────▼────┐           ┌────▼────┐           ┌────▼────┐           │
-│       │ NODE 1  │           │ NODE 2  │           │ NODE N  │           │
-│       │         │           │         │           │         │           │
-│       │ Share 1 │           │ Share 2 │    ...    │ Share N │           │
-│       │ (s₁)    │           │ (s₂)    │           │ (sₙ)    │           │
-│       └─────────┘           └─────────┘           └─────────┘           │
-│                                                                          │
-│   Security: Any t nodes can prove, but t-1 nodes learn NOTHING           │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-## 📁 Project Structure
+## Overview
 
 ```
-zelana-prover/
-├── Cargo.toml                      # Workspace configuration
-├── README.md                       # This file
-│
-├── crates/
-│   ├── prover-core/                # Core cryptography (no networking)
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs              # Public API
-│   │       ├── types.rs            # Fr, G1, error types
-│   │       ├── shamir.rs           # Secret sharing
-│   │       └── schnorr.rs          # Distributed Schnorr proofs
-│   │
-│   ├── prover-network/             # Network protocol types
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── messages.rs         # API request/response types
-│   │       └── serde_utils.rs      # Base64 serialization
-│   │
-│   ├── prover-node/                # Prover node service
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs             # HTTP server
-│   │
-│   ├── prover-coordinator/         # Coordinator service
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs             # Protocol orchestration
-│   │
-│   └── prover-control/             # Docker control server
-│       ├── Cargo.toml
-│       └── src/
-│           └── main.rs             # Cluster management API
-│
-├── dashboard/                      # Interactive web dashboard (Next.js)
-│   ├── package.json
-│   ├── next.config.ts              # API proxy configuration
-│   └── app/
-│       ├── page.tsx
-│       ├── layout.tsx
-│       ├── globals.css             # Dark theme (Tailwind v4)
-│       ├── types.ts
-│       └── components/
-│           ├── InteractiveDashboard.tsx
-│           ├── ClusterView.tsx
-│           ├── WorkflowPanel.tsx
-│           └── LogViewer.tsx
-│
-├── deploy/
-│   ├── docker/
-│   │   ├── Dockerfile.node
-│   │   ├── Dockerfile.coordinator
-│   │   └── docker-compose.yml
-│   │
-│   └── k8s/
-│       ├── namespace.yaml
-│       ├── kustomization.yaml
-│       ├── prover-nodes/
-│       │   ├── statefulset.yaml
-│       │   └── service.yaml
-│       └── coordinator/
-│           ├── deployment.yaml
-│           ├── service.yaml
-│           └── configmap.yaml
-│
-├── scripts/
-│   ├── start-dashboard.sh          # Launch dashboard + control server
-│   ├── test-local.sh               # Local docker-compose test
-│   └── deploy-k8s.sh               # Kubernetes deployment
-│
-├── docs/
-│   ├── ARCHITECTURE.md             # Detailed architecture
-│   ├── PROTOCOL.md                 # Protocol specification
-│   └── STATE_MACHINES.md           # State machine diagrams
-│
-└── .github/
-    └── workflows/
-        └── ci.yml                  # CI/CD pipeline
+                     BLIND DISTRIBUTED PROVING
+
+    ┌──────────┐     Commitment Only      ┌────────────────┐
+    │  Client  │ ─────────────────────────│  Coordinator   │
+    │          │   (witness hidden!)      │                │
+    │ witness  │                          │  Orchestrates  │
+    │  salt    │                          │  No secrets    │
+    └──────────┘                          └───────┬────────┘
+         │                                        │
+         │                           ┌────────────┼────────────┐
+         │                           │            │            │
+         │                      ┌────▼────┐  ┌────▼────┐  ┌────▼────┐
+         │                      │ Node 1  │  │ Node 2  │  │ Node N  │
+         │                      │ Share 1 │  │ Share 2 │  │ Share N │
+         │                      │   (s₁)  │  │   (s₂)  │  │  (sₙ)   │
+         │                      └─────────┘  └─────────┘  └─────────┘
+         │                           │            │            │
+         │                           └────────────┼────────────┘
+         │                                        │
+         │  Reveal for Verification               │
+         └────────────────────────────────────────┘
+
+    Privacy: Provers NEVER see the public witness - only commitment hash
+    Security: Any t nodes can prove, but t-1 nodes learn NOTHING
 ```
 
-## 🚀 Quick Start
+## Features
 
-### Interactive Dashboard (Recommended)
+- **Blind Proving**: Public witness hidden from provers until verification
+- **Threshold Security**: t-of-n nodes required, t-1 nodes learn nothing
+- **Pluggable Circuits**: Easy to add new ZK circuits
+- **Interactive Dashboard**: Real-time cluster management and visualization
+- **Production Ready**: Docker and Kubernetes deployment
 
-The easiest way to run the system is using the interactive dashboard:
+## Quick Start
+
+### Interactive Dashboard
 
 ```bash
-# 1. Launch the dashboard and control server
+# Launch dashboard + control server
 ./scripts/start-dashboard.sh
 
-# 2. Open your browser
-# Navigate to: http://localhost:5173
+# Open browser: http://localhost:5173
 
-# 3. Start the cluster
-# Click "▶ Start Cluster" button in the dashboard
-
-# 4. Run the workflow
-# Follow the 3-step workflow: Setup → Prove → Verify
+# Click "Start Cluster" then run the 3-step workflow:
+# Setup → Prove → Verify
 ```
 
-The dashboard provides:
-- **One-click cluster management** (start/stop Docker Compose)
-- **Live logs** with filtering by source (system/setup/prove/verify)
-- **Container monitoring** with individual log viewing
-- **Visual cluster topology** showing node status
-- **Interactive workflow** with step-by-step guidance
-
-**Ports:**
-- Dashboard: http://localhost:5173
-- Control Server: http://localhost:9000
-- Coordinator: http://localhost:8000
-- Nodes: http://localhost:3001-3005
-
-### Local Development (Docker Compose)
+### Docker Compose
 
 ```bash
-# Start the network (1 coordinator + 5 nodes, threshold=3)
 cd deploy/docker
-docker-compose up --build
+docker compose up --build
 
-# In another terminal, test the system
-cd scripts
-./test-local.sh
+# Test with the dashboard or scripts
+./scripts/test-local.sh
 ```
 
-### Manual Testing (API)
+## Available Circuits
 
-```bash
-# 1. Health check
-curl http://localhost:8000/health
+| Circuit | Status | Statement |
+|---------|--------|-----------|
+| **Schnorr Signature** | Active | I know secret `s` such that `PK = g^s` |
+| **Hash Preimage** | Active | I know preimage such that `H(preimage) = target` |
+| Range Proof | Coming | My value is in range `[min, max]` |
+| Merkle Membership | Coming | This leaf is in the Merkle tree |
 
-# 2. Setup: distribute secret shares
-curl -X POST http://localhost:8000/setup \
-  -H "Content-Type: application/json" \
-  -d '{"threshold": 3, "total_nodes": 5}'
+### Adding New Circuits
 
-# 3. Generate proof
-curl -X POST http://localhost:8000/prove \
-  -H "Content-Type: application/json" \
-  -d '{"secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}'
+1. Create handler: `dashboard/app/circuits/my-circuit.ts`
+2. Register: Add to `dashboard/app/circuits/index.ts`
+3. Backend: Add to `CircuitType` enum in `crates/prover-network/src/messages.rs`
+4. Verify: Implement in `crates/prover-coordinator/src/main.rs`
 
-# 4. Verify proof (use proof from step 3)
-curl -X POST http://localhost:8000/verify \
-  -H "Content-Type: application/json" \
-  -d '{"proof": {...}}'
+## Project Structure
+
+```
+zelana-forge/
+├── crates/
+│   ├── prover-core/          # Core crypto (Shamir, Schnorr)
+│   ├── prover-network/       # Message types & serialization
+│   ├── prover-node/          # Prover node HTTP server
+│   ├── prover-coordinator/   # Orchestration server
+│   └── prover-control/       # Docker cluster control
+│
+├── dashboard/                # Next.js interactive dashboard
+│   ├── app/
+│   │   ├── components/       # UI components
+│   │   ├── circuits/         # Circuit configuration system
+│   │   └── utils/            # Client-side crypto
+│   └── package.json
+│
+├── deploy/
+│   ├── docker/               # Docker Compose setup
+│   └── k8s/                  # Kubernetes manifests
+│
+├── scripts/                  # Automation scripts
+└── docs/                     # Technical documentation
 ```
 
-### Kubernetes Deployment
+## Ports
 
-```bash
-# Deploy to cluster
-./scripts/deploy-k8s.sh
+| Service | Port | URL |
+|---------|------|-----|
+| Dashboard | 5173 | http://localhost:5173 |
+| Control Server | 9000 | http://localhost:9000 |
+| Coordinator | 8000 | http://localhost:8000 |
+| Nodes | 3001-3005 | http://localhost:300X |
 
-# Port forward to access
-kubectl -n prover port-forward svc/prover-coordinator 8000:80
-```
-
-## 🔐 Security Properties
+## Security Properties
 
 | Property | Description |
 |----------|-------------|
-| **Threshold Security** | Any `t` of `n` nodes can create a proof |
-| **Information-Theoretic** | `t-1` nodes learn absolutely nothing about the secret |
-| **Coordinator Blindness** | Coordinator never sees shares, only commitments |
-| **Zero-Knowledge** | Verifier learns nothing except proof validity |
-| **Non-Interactive** | Fiat-Shamir transform eliminates interaction |
+| **Blind Proving** | Provers see commitment hash, not public witness |
+| **Threshold Security** | Any t of n nodes can prove |
+| **Information-Theoretic** | t-1 nodes learn nothing about secret |
+| **Zero-Knowledge** | Verifier learns only proof validity |
 
-## 📊 Protocol Overview
-
-See [docs/PROTOCOL.md](docs/PROTOCOL.md) for detailed specification.
+## Protocol Flow
 
 ```
-Phase 1: COMMITMENT      Phase 2: CHALLENGE       Phase 3: RESPONSE        Phase 4: AGGREGATE
-─────────────────────    ─────────────────────    ─────────────────────    ─────────────────────
-                        
-Node 1: C₁ = g^r₁  ───┐                          Node 1: z₁ = r₁ + c·s₁   
-                      │                                                    
-Node 2: C₂ = g^r₂  ───┼──► c = H(g,PK,C₁..Cₜ) ──► Node 2: z₂ = r₂ + c·s₂ ──► C = Σλᵢ·Cᵢ
-                      │                                                        z = Σλᵢ·zᵢ
-Node t: Cₜ = g^rₜ  ───┘                          Node t: zₜ = rₜ + c·sₜ   
+Phase 0: COMMIT       Phase 1: SHARE        Phase 2: PROVE        Phase 3: VERIFY
+────────────────      ────────────────      ────────────────      ────────────────
 
-                                                 Verify: g^z = C · PK^c
+Client:               Coordinator:          Nodes:                Client reveals:
+Com = H(witness||    Split secret s →      Generate C_i, z_i     witness, salt
+      salt)          Distribute shares     (blind to witness)
+                                           ↓
+Send Com only        Send (share_i, Com)   Aggregate via         Verify:
+(witness hidden!)    to each node          Lagrange              H(w||s) == Com
+                                                                 g^z == C · PK^c
 ```
 
-## 🏗️ Architecture
+## Documentation
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture.
+- [Architecture](docs/ARCHITECTURE.md) - System design
+- [Protocol](docs/PROTOCOL.md) - Cryptographic specification
+- [State Machines](docs/STATE_MACHINES.md) - Component states
+- [Diagrams](docs/DIAGRAMS.md) - Visual protocol flow
+- [Privacy Design](docs/PRIVACY_DESIGN.md) - Blind proving details
 
-### Crate Dependencies
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    Applications                      │
-├──────────────────────┬──────────────────────────────┤
-│   prover-node        │    prover-coordinator        │
-│   (HTTP Server)      │    (Orchestrator)            │
-└──────────┬───────────┴───────────────┬──────────────┘
-           │                           │
-           ▼                           ▼
-┌─────────────────────────────────────────────────────┐
-│                  prover-network                      │
-│            (Messages, Serialization)                 │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│                   prover-core                        │
-│        (Shamir, Schnorr, Cryptography)              │
-└─────────────────────────────────────────────────────┘
-```
-
-## 📖 Documentation
-
-- [Architecture](docs/ARCHITECTURE.md) - System design and components
-- [Protocol](docs/PROTOCOL.md) - Cryptographic protocol specification
-- [State Machines](docs/STATE_MACHINES.md) - Node and coordinator state diagrams
-
-## 🧪 Testing
+## Development
 
 ```bash
-# Run all tests
-cargo test --all
+# Build all crates
+cargo build --workspace
 
-# Run specific crate tests
-cargo test -p prover-core
+# Run tests
+cargo test --workspace
 
 # Run with logging
-RUST_LOG=debug cargo test
+RUST_LOG=debug cargo run -p prover-coordinator
 ```
 
-## 📄 License
+## License
 
 MIT OR Apache-2.0
