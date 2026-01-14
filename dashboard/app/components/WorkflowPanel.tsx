@@ -2,6 +2,15 @@
 
 import { useState } from 'react';
 import type { LogEntry, ApiResponse, SetupResponse, ProofData } from '../types';
+import { commitToWitness, generateSalt, generateSessionId } from '../utils/crypto';
+import {
+  getAllCircuits,
+  getCircuitHandler,
+  getCircuitMetadata,
+  isCircuitActive,
+  type CircuitInputField,
+  type CircuitSetupInputs,
+} from '../circuits';
 
 interface WorkflowPanelProps {
   systemReady: boolean;
@@ -9,10 +18,15 @@ interface WorkflowPanelProps {
   onLog: (message: string, type: LogEntry['type'], source: LogEntry['source']) => void;
 }
 
+interface ShareInfo {
+  node_id: number;
+  share_index: number;
+}
+
 const steps = [
-  { id: 0, title: 'Setup System', icon: '🔧', description: 'Initialize secret sharing' },
-  { id: 1, title: 'Generate Proof', icon: '🔐', description: 'Create distributed proof' },
-  { id: 2, title: 'Verify Proof', icon: '✓', description: 'Validate the proof' },
+  { id: 0, title: 'Setup', icon: '🔧', description: 'Initialize secret sharing' },
+  { id: 1, title: 'Prove', icon: '🔐', description: 'Create distributed proof' },
+  { id: 2, title: 'Verify', icon: '✓', description: 'Validate the proof' },
 ];
 
 interface RequestResponse {
@@ -29,66 +43,43 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
   const [proofData, setProofData] = useState<ProofData | null>(null);
   const [verifyResult, setVerifyResult] = useState<boolean | null>(null);
 
-  // Custom parameters - Schnorr
-  const [customSecret, setCustomSecret] = useState('');
-  const [customMessage, setCustomMessage] = useState('my_custom_proof_message');
-
-  // Custom parameters - Hash Preimage
-  const [hashPreimage, setHashPreimage] = useState('my_secret_password');
-  const [targetHash, setTargetHash] = useState('');
-
+  // Circuit inputs - dynamic based on selected circuit
+  const [circuitInputs, setCircuitInputs] = useState<CircuitSetupInputs>({});
   const [selectedCircuit, setSelectedCircuit] = useState<string>('schnorr');
+
+  // Extra data from circuit processing (e.g., computed target hash)
+  const [circuitExtraData, setCircuitExtraData] = useState<Record<string, unknown>>({});
+
+  // Blind proving state
+  const [salt, setSalt] = useState<Uint8Array | null>(null);
+  const [sessionId, setSessionId] = useState<string>('');
+  const [shares, setShares] = useState<ShareInfo[]>([]);
+  const [publicWitness, setPublicWitness] = useState<string>('');
 
   // Request/Response tracking
   const [requestResponses, setRequestResponses] = useState<Record<number, RequestResponse>>({});
 
-  // Available circuits (can be expanded as more are implemented)
-  const circuits = [
-    {
-      id: 'schnorr',
-      name: 'Schnorr Signature',
-      icon: '🔐',
-      description: 'Prove you know the secret key for a public key (like authentication)',
-      statement: 'I know secret s such that PublicKey = g^s',
-      publicInputs: ['Public Key (g^s)', 'Message to sign'],
-      privateWitness: ['Secret Key (s)'],
-      useCase: 'Authentication, Digital Signatures, Key Ownership',
-      status: 'active'
-    },
-    {
-      id: 'hash-preimage',
-      name: 'Hash Preimage',
-      icon: '🔗',
-      description: 'Prove you know the input that produces a specific hash output',
-      statement: 'I know preimage such that Hash(preimage) = target',
-      publicInputs: ['Target Hash (0x1234...)'],
-      privateWitness: ['Preimage (the secret input)'],
-      useCase: 'Password verification, Secret commitments',
-      status: 'ui-only'
-    },
-    {
-      id: 'range-proof',
-      name: 'Range Proof',
-      icon: '📊',
-      description: 'Prove a committed value is within a range without revealing it',
-      statement: 'My committed value is between min and max',
-      publicInputs: ['Commitment', 'Min/Max bounds'],
-      privateWitness: ['Actual value', 'Commitment randomness'],
-      useCase: 'Age verification, Balance proofs',
-      status: 'coming-soon'
-    },
-    {
-      id: 'merkle-membership',
-      name: 'Merkle Membership',
-      icon: '🌳',
-      description: 'Prove an element is in a Merkle tree without revealing which one',
-      statement: 'This leaf is in the Merkle tree',
-      publicInputs: ['Merkle Root', 'Leaf value'],
-      privateWitness: ['Merkle path (sibling hashes)'],
-      useCase: 'Allowlist membership, Anonymous voting',
-      status: 'coming-soon'
-    }
-  ];
+  // Collapsible sections
+  const [showPrivacyDetails, setShowPrivacyDetails] = useState(false);
+
+  // Get all circuits from registry
+  const circuits = getAllCircuits();
+
+  // Get current circuit handler
+  const currentHandler = getCircuitHandler(selectedCircuit);
+  const currentMetadata = getCircuitMetadata(selectedCircuit);
+
+  // Handle circuit input change
+  const handleInputChange = (fieldId: string, value: string) => {
+    setCircuitInputs(prev => ({ ...prev, [fieldId]: value }));
+  };
+
+  // Reset inputs when circuit changes
+  const handleCircuitChange = (circuitId: string) => {
+    setSelectedCircuit(circuitId);
+    setCircuitInputs({});
+    setCircuitExtraData({});
+  };
 
   const handleSetup = async () => {
     if (!coordinatorRunning) {
@@ -96,17 +87,40 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
       return;
     }
 
+    if (!currentHandler || !isCircuitActive(selectedCircuit)) {
+      onLog('❌ Selected circuit is not available.', 'error', 'setup');
+      return;
+    }
+
     setLoading(0);
-    onLog('🔧 Initializing secret sharing...', 'info', 'setup');
+    onLog(`🔧 Initializing BLIND secret sharing for ${currentMetadata?.name || selectedCircuit}...`, 'info', 'setup');
 
     try {
-      // Use custom secret or generate random one
-      const secret = customSecret.trim() || Array.from({ length: 64 }, () =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join('');
+      const setupPayload = await currentHandler.processSetup(circuitInputs);
+      const { secret, witness, extraData } = setupPayload;
 
-      const requestPayload = { secret };
-      onLog(`📤 Sending setup request with secret (${secret.length} chars)`, 'info', 'setup');
+      if (extraData) {
+        setCircuitExtraData(extraData);
+        if (extraData.targetHash) {
+          onLog(`🔗 Target hash: ${String(extraData.targetHash).substring(0, 32)}...`, 'info', 'setup');
+        }
+      }
+
+      setPublicWitness(witness);
+
+      onLog('🔒 Generating commitment client-side...', 'info', 'setup');
+      const saltBytes = generateSalt();
+      const commitmentHash = await commitToWitness(witness, saltBytes);
+      const session = generateSessionId();
+
+      setSalt(saltBytes);
+      setSessionId(session);
+
+      const requestPayload = {
+        circuit_type: selectedCircuit,
+        witness_commitment: { hash: commitmentHash, session_id: session },
+        secret
+      };
 
       const res = await fetch('/api/setup', {
         method: 'POST',
@@ -119,13 +133,12 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
 
-      const data: ApiResponse<SetupResponse> = await res.json();
+      const data: ApiResponse<SetupResponse & { shares?: ShareInfo[] }> = await res.json();
 
-      // Track request/response
       setRequestResponses(prev => ({
         ...prev,
         0: {
-          request: requestPayload,
+          request: { ...requestPayload, secret: secret.substring(0, 10) + '...' },
           response: data,
           timestamp: new Date()
         }
@@ -133,11 +146,19 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
 
       if (data.status === 'success') {
         setSetupData(data.data);
+        if (data.data.shares) {
+          setShares(data.data.shares);
+        } else {
+          setShares([
+            { node_id: 1, share_index: 1 },
+            { node_id: 2, share_index: 2 },
+            { node_id: 3, share_index: 3 },
+          ]);
+        }
+
         setCompletedSteps(prev => [...prev, 0]);
         setCurrentStep(1);
-        onLog(`✅ Secret split into ${data.data.num_nodes} shares using Shamir's Secret Sharing`, 'success', 'setup');
-        onLog(`🔒 Threshold: ${data.data.threshold} of ${data.data.num_nodes} shares needed to reconstruct`, 'info', 'setup');
-        onLog(`🔐 Each node received their share via encrypted channel`, 'info', 'setup');
+        onLog(`✅ Secret split into ${data.data.num_nodes} shares (threshold: ${data.data.threshold})`, 'success', 'setup');
       } else {
         onLog(`❌ Setup failed: ${data.message || 'Unknown error'}`, 'error', 'setup');
       }
@@ -155,12 +176,16 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
       return;
     }
 
+    if (!sessionId) {
+      onLog('❌ No session ID found. Please run setup first.', 'error', 'prove');
+      return;
+    }
+
     setLoading(1);
-    onLog('🔐 Generating distributed Schnorr proof...', 'info', 'prove');
+    onLog('🔐 Generating distributed proof...', 'info', 'prove');
 
     try {
-      const requestPayload = { message: customMessage };
-      onLog(`📤 Sending prove request with message: "${customMessage}"`, 'info', 'prove');
+      const requestPayload = { session_id: sessionId };
 
       const res = await fetch('/api/prove', {
         method: 'POST',
@@ -173,27 +198,26 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
 
-      const data: ApiResponse<{ proof: ProofData; participants: number }> = await res.json();
+      const data: ApiResponse<{ blind_proof: any; participants?: number }> = await res.json();
 
-      // Track request/response
       setRequestResponses(prev => ({
         ...prev,
-        1: {
-          request: requestPayload,
-          response: data,
-          timestamp: new Date()
-        }
+        1: { request: requestPayload, response: data, timestamp: new Date() }
       }));
 
       if (data.status === 'success') {
-        setProofData(data.data.proof);
+        const blindProof = data.data.blind_proof;
+        setProofData({
+          commitment: JSON.stringify(blindProof.commitment),
+          challenge: blindProof.challenge,
+          response: blindProof.response,
+          generator: JSON.stringify(blindProof.generator),
+          public_key: JSON.stringify(blindProof.public_key)
+        });
+
         setCompletedSteps(prev => [...prev, 1]);
         setCurrentStep(2);
-        onLog('✅ Phase 1: Coordinator collected commitments from threshold nodes', 'success', 'prove');
-        onLog(`✅ Phase 2: Fiat-Shamir challenge computed: H(g || PK || C₁...Cₜ || msg)`, 'info', 'prove');
-        onLog(`✅ Phase 3: Nodes computed responses: zᵢ = rᵢ + c·sᵢ (share remains secret!)`, 'info', 'prove');
-        onLog(`✅ Phase 4: Aggregated using Lagrange interpolation`, 'success', 'prove');
-        onLog(`🎯 ${data.data.participants} nodes participated`, 'info', 'prove');
+        onLog(`✅ Proof generated with ${data.data.participants || 'threshold'} nodes`, 'success', 'prove');
       } else {
         onLog(`❌ Proof generation failed: ${data.message}`, 'error', 'prove');
       }
@@ -211,12 +235,40 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
       return;
     }
 
+    if (!salt || !publicWitness) {
+      onLog('❌ Missing salt or public witness.', 'error', 'verify');
+      return;
+    }
+
     setLoading(2);
     onLog('🔍 Verifying proof...', 'info', 'verify');
 
     try {
-      const requestPayload = { proof: proofData };
-      onLog('📤 Sending verification request with proof data', 'info', 'verify');
+      if (!proofData.public_key) {
+        onLog('❌ Proof is missing public_key. Please re-run Setup and Prove.', 'error', 'verify');
+        setLoading(null);
+        return;
+      }
+
+      const blindProof = {
+        witness_commitment: {
+          hash: await commitToWitness(publicWitness, salt),
+          session_id: sessionId
+        },
+        commitment: JSON.parse(proofData.commitment),
+        challenge: proofData.challenge,
+        response: proofData.response,
+        generator: JSON.parse(proofData.generator),
+        public_key: JSON.parse(proofData.public_key),
+        circuit_type: selectedCircuit
+      };
+
+      const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('');
+      const encoder = new TextEncoder();
+      const witnessBytes = encoder.encode(publicWitness);
+      const witnessHex = Array.from(witnessBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const requestPayload = { blind_proof: blindProof, public_witness: witnessHex, salt: saltHex };
 
       const res = await fetch('/api/verify', {
         method: 'POST',
@@ -229,13 +281,12 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
 
-      const data: ApiResponse<{ valid: boolean }> = await res.json();
+      const data: ApiResponse<{ valid: boolean; commitment_valid?: boolean }> = await res.json();
 
-      // Track request/response
       setRequestResponses(prev => ({
         ...prev,
         2: {
-          request: { proof: { ...proofData, commitment: proofData.commitment.substring(0, 20) + '...', challenge: proofData.challenge.substring(0, 20) + '...', response: proofData.response.substring(0, 20) + '...' } },
+          request: { blind_proof: '...', public_witness: witnessHex.substring(0, 20) + '...', salt: saltHex.substring(0, 16) + '...' },
           response: data,
           timestamp: new Date()
         }
@@ -244,15 +295,7 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
       if (data.status === 'success') {
         setVerifyResult(data.data.valid);
         setCompletedSteps(prev => [...prev, 2]);
-        if (data.data.valid) {
-          onLog('✅ Step 1: Verified g^z = C · PK^c (Schnorr equation)', 'success', 'verify');
-          onLog('✅ Step 2: Challenge matches H(g || PK || C || msg)', 'success', 'verify');
-          onLog('✅ Step 3: All cryptographic checks passed', 'success', 'verify');
-          onLog('🎉 Proof is VALID! Secret was never revealed.', 'success', 'verify');
-        } else {
-          onLog('❌ Verification equation failed', 'error', 'verify');
-          onLog('❌ Proof is INVALID', 'error', 'verify');
-        }
+        onLog(data.data.valid ? '✅ Proof is VALID!' : '❌ Proof is INVALID', data.data.valid ? 'success' : 'error', 'verify');
       } else {
         onLog(`❌ Verification failed: ${data.message}`, 'error', 'verify');
       }
@@ -270,598 +313,288 @@ export default function WorkflowPanel({ systemReady, coordinatorRunning, onLog }
     else if (stepId === 2) handleVerify();
   };
 
-  return (
-    <div className="p-6 h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto">
-        <div className="mb-6">
-          <h2 className="text-lg font-bold text-text-primary">Proof Workflow</h2>
-          <p className="text-xs text-text-tertiary mt-1">Execute distributed Zero-Knowledge proof generation with custom parameters</p>
-        </div>
+  const renderInputField = (field: CircuitInputField) => {
+    const value = circuitInputs[field.id] || field.defaultValue || '';
+    const borderColor = field.isPrivate ? 'border-accent-red/40' : 'border-accent-green/40';
+    const focusRing = field.isPrivate ? 'focus:ring-accent-red/50' : 'focus:ring-accent-green/50';
 
-        {/* Circuit Tabs */}
-        <div className="mb-6">
-          <div className="flex gap-2 border-b border-border pb-2">
-            {circuits.filter(c => c.status === 'active' || c.status === 'ui-only').map((circuit) => (
-              <button
-                key={circuit.id}
-                onClick={() => setSelectedCircuit(circuit.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-t-lg font-medium text-sm transition-all duration-200 ${
-                  selectedCircuit === circuit.id
-                    ? 'bg-accent-blue text-white shadow-lg'
-                    : 'bg-bg-tertiary text-text-secondary hover:bg-bg-secondary hover:text-text-primary'
-                }`}
-              >
-                <span className="text-lg">{circuit.icon}</span>
-                <span>{circuit.name}</span>
-                {circuit.status === 'ui-only' && (
-                  <span className="text-xs px-1.5 py-0.5 bg-accent-yellow/30 rounded">UI</span>
-                )}
-              </button>
-            ))}
+    return (
+      <div key={field.id} className="mb-2">
+        <label className="block text-[10px] font-medium text-text-secondary mb-1">
+          {field.isPrivate ? '🔒' : '🌐'} {field.label}
+        </label>
+        <input
+          type={field.type === 'password' ? 'password' : 'text'}
+          value={value}
+          onChange={(e) => handleInputChange(field.id, e.target.value)}
+          placeholder={field.placeholder}
+          className={`w-full px-2 py-1.5 bg-bg-primary border ${borderColor} rounded text-[11px] ${
+            field.type === 'hex' ? 'font-mono' : ''
+          } text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-1 ${focusRing}`}
+          disabled={loading !== null}
+        />
+      </div>
+    );
+  };
+
+  // Compact request/response preview
+  const renderRequestResponse = (stepId: number) => {
+    const data = requestResponses[stepId];
+    if (!data) return null;
+
+    return (
+      <details className="mt-2 text-[10px]">
+        <summary className="cursor-pointer text-text-tertiary hover:text-text-secondary">
+          📡 API Details
+        </summary>
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          <div className="bg-bg-tertiary rounded p-2">
+            <div className="text-accent-blue font-semibold mb-1">Request</div>
+            <pre className="text-[9px] font-mono overflow-x-auto max-h-20 text-text-secondary">
+              {JSON.stringify(data.request, null, 1)}
+            </pre>
+          </div>
+          <div className="bg-bg-tertiary rounded p-2">
+            <div className="text-accent-green font-semibold mb-1">Response</div>
+            <pre className="text-[9px] font-mono overflow-x-auto max-h-20 text-text-secondary">
+              {JSON.stringify(data.response, null, 1)}
+            </pre>
+          </div>
+        </div>
+      </details>
+    );
+  };
+
+  return (
+    <div className="p-4 h-full overflow-y-auto">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-base font-bold text-text-primary">Proof Workflow</h2>
+            <p className="text-[10px] text-text-tertiary">Distributed ZK proof generation</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-24 bg-bg-tertiary rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-accent-blue to-accent-green transition-all"
+                style={{ width: `${(completedSteps.length / steps.length) * 100}%` }}
+              />
+            </div>
+            <span className="text-[10px] text-text-tertiary">{completedSteps.length}/{steps.length}</span>
           </div>
         </div>
 
-        {/* Selected Circuit Details */}
-        {(() => {
-          const circuit = circuits.find(c => c.id === selectedCircuit);
-          if (!circuit) return null;
+        {/* Circuit Selector - Compact */}
+        <div className="flex gap-1 mb-4">
+          {circuits.filter(c => c.status === 'active' || c.status === 'ui-only').map((circuit) => (
+            <button
+              key={circuit.id}
+              onClick={() => handleCircuitChange(circuit.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
+                selectedCircuit === circuit.id
+                  ? 'bg-accent-blue text-white'
+                  : 'bg-bg-tertiary text-text-secondary hover:bg-bg-secondary'
+              }`}
+            >
+              <span>{circuit.icon}</span>
+              <span>{circuit.name}</span>
+            </button>
+          ))}
+        </div>
 
-          return (
-            <div className="mb-6 bg-bg-secondary rounded-lg p-4 border border-border">
-              <div className="flex items-start gap-3 mb-4">
-                <div className="text-3xl">{circuit.icon}</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <h3 className="text-sm font-bold text-text-primary">{circuit.name}</h3>
-                    {circuit.status === 'ui-only' && (
-                      <span className="text-xs px-2 py-0.5 bg-accent-yellow/20 text-accent-yellow border border-accent-yellow/40 rounded-full">
-                        UI Only - Backend Pending
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-text-secondary mb-2">{circuit.description}</p>
-                  <div className="text-xs font-mono text-accent-purple bg-accent-purple/10 px-2 py-1 rounded border border-accent-purple/30 mb-2 inline-block">
-                    Statement: "{circuit.statement}"
-                  </div>
-                  <div className="text-[10px] text-text-tertiary">
-                    <span className="font-semibold">Use case:</span> {circuit.useCase}
-                  </div>
-                </div>
-              </div>
-
-              {/* Public/Private Breakdown */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Public Inputs */}
-                <div className="bg-bg-primary rounded-lg p-3 border border-accent-green/30">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-xs font-semibold text-accent-green">🌐 Public Inputs</span>
-                    <span className="text-[10px] text-text-tertiary">(everyone can see)</span>
-                  </div>
-                  <ul className="space-y-1">
-                    {circuit.publicInputs.map((input, idx) => (
-                      <li key={idx} className="text-[11px] text-text-secondary flex items-start gap-1.5">
-                        <span className="text-accent-green mt-0.5">•</span>
-                        <span>{input}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Private Witness */}
-                <div className="bg-bg-primary rounded-lg p-3 border border-accent-red/30">
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-xs font-semibold text-accent-red">🔒 Private Witness</span>
-                    <span className="text-[10px] text-text-tertiary">(kept secret)</span>
-                  </div>
-                  <ul className="space-y-1">
-                    {circuit.privateWitness.map((witness, idx) => (
-                      <li key={idx} className="text-[11px] text-text-secondary flex items-start gap-1.5">
-                        <span className="text-accent-red mt-0.5">•</span>
-                        <span>{witness}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+        {/* Circuit Info - Compact */}
+        {currentMetadata && (
+          <div className="mb-4 bg-bg-secondary rounded-lg p-3 border border-border">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xl">{currentMetadata.icon}</span>
+              <div>
+                <span className="text-sm font-semibold text-text-primary">{currentMetadata.name}</span>
+                <span className="text-[10px] text-text-tertiary ml-2">{currentMetadata.useCase}</span>
               </div>
             </div>
-          );
-        })()}
-
-        {/* Backend Implementation Warning */}
-        {selectedCircuit === 'hash-preimage' && (
-          <div className="mb-6 bg-accent-yellow/10 border-2 border-accent-yellow/50 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">⚠️</span>
+            <div className="text-[10px] font-mono text-accent-purple bg-accent-purple/10 px-2 py-1 rounded inline-block">
+              {currentMetadata.statement}
+            </div>
+            <div className="flex gap-4 mt-2 text-[10px]">
               <div>
-                <h4 className="text-sm font-bold text-accent-yellow mb-2">Backend Not Implemented</h4>
-                <p className="text-xs text-text-secondary mb-2">
-                  The Hash Preimage circuit is <span className="font-semibold">UI only for demonstration purposes</span>.
-                  When you run the workflow, the backend will still execute the <span className="font-semibold text-accent-blue">Schnorr Signature</span> circuit.
-                </p>
-                <div className="bg-bg-primary rounded-lg p-3 mt-2">
-                  <div className="text-[10px] font-semibold text-text-primary mb-2">What actually happens:</div>
-                  <ul className="text-[10px] text-text-secondary space-y-1">
-                    <li>• Your "preimage" input will be treated as a secret key</li>
-                    <li>• Your "target hash" input will be ignored</li>
-                    <li>• The system will generate a Schnorr signature instead</li>
-                    <li>• Verification will check the Schnorr proof, not hash preimage</li>
-                  </ul>
-                </div>
-                <p className="text-[10px] text-accent-yellow mt-2 font-medium">
-                  💡 Use this to understand the UI and data flow. For actual hash preimage proofs, backend implementation is needed.
-                </p>
+                <span className="text-accent-green">🌐 Public:</span>
+                <span className="text-text-secondary ml-1">{currentMetadata.publicInputs.join(', ')}</span>
+              </div>
+              <div>
+                <span className="text-accent-red">🔒 Private:</span>
+                <span className="text-text-secondary ml-1">{currentMetadata.privateWitness.join(', ')}</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Proof Data Flow Diagram */}
-        <div className="mb-6 bg-gradient-to-br from-bg-secondary to-bg-tertiary rounded-lg p-5 border border-border">
-          <h3 className="text-sm font-semibold text-text-primary mb-4 flex items-center gap-2">
-            <span>🔄</span>
-            <span>Zero-Knowledge Proof Data Flow</span>
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Private Witness */}
-            <div className="bg-bg-primary rounded-lg p-4 border-2 border-accent-red/30">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-2xl">🔒</span>
-                <div>
-                  <div className="text-xs font-bold text-accent-red">Private Witness</div>
-                  <div className="text-[10px] text-text-tertiary">Secret Data</div>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="text-[11px] text-text-secondary">
-                  You keep these <span className="font-semibold text-accent-red">secret</span>:
-                </div>
-                <ul className="space-y-1">
-                  {circuits.find(c => c.id === selectedCircuit)?.privateWitness.map((w, idx) => (
-                    <li key={idx} className="text-[10px] bg-accent-red/10 px-2 py-1 rounded border border-accent-red/30 text-text-primary">
-                      • {w}
-                    </li>
-                  ))}
-                </ul>
-                <div className="text-[10px] text-accent-red font-semibold mt-2">
-                  ⚠️ Never revealed!
-                </div>
-              </div>
-            </div>
+        {/* Main Workflow Grid - Steps side by side */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {steps.map((step) => {
+            const isCompleted = completedSteps.includes(step.id);
+            const isCurrent = currentStep === step.id;
+            const isAvailable = step.id === 0 || completedSteps.includes(step.id - 1);
 
-            {/* ZK Proof Generation */}
-            <div className="flex flex-col items-center justify-center gap-3">
-              <div className="text-3xl animate-pulse">⚡</div>
-              <div className="text-center">
-                <div className="text-xs font-bold text-accent-blue mb-1">ZK Proof Circuit</div>
-                <div className="text-[10px] text-text-tertiary mb-2">Cryptographic Magic</div>
-                <div className="bg-accent-blue/10 border border-accent-blue/30 rounded px-3 py-2">
-                  <div className="text-[10px] text-text-secondary mb-1">Combines:</div>
-                  <div className="text-[10px] font-mono text-accent-blue">
-                    Private + Public → Proof
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="text-xl text-accent-green">✓</div>
-                <div className="text-[10px] text-text-tertiary">Valid proof generated</div>
-              </div>
-            </div>
-
-            {/* Public Inputs + Proof */}
-            <div className="bg-bg-primary rounded-lg p-4 border-2 border-accent-green/30">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-2xl">🌐</span>
-                <div>
-                  <div className="text-xs font-bold text-accent-green">Public Data</div>
-                  <div className="text-[10px] text-text-tertiary">Everyone Can See</div>
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-[11px] text-text-secondary mb-1">
-                    <span className="font-semibold text-accent-green">Public Inputs:</span>
-                  </div>
-                  <ul className="space-y-1">
-                    {circuits.find(c => c.id === selectedCircuit)?.publicInputs.map((inp, idx) => (
-                      <li key={idx} className="text-[10px] bg-accent-green/10 px-2 py-1 rounded border border-accent-green/30 text-text-primary">
-                        • {inp}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="border-t border-border pt-2">
-                  <div className="text-[11px] text-text-secondary mb-1">
-                    <span className="font-semibold text-accent-blue">+ The Proof:</span>
-                  </div>
-                  <div className="text-[10px] bg-accent-blue/10 px-2 py-1 rounded border border-accent-blue/30 text-text-primary">
-                    Cryptographic proof data (C, c, z)
-                  </div>
-                </div>
-                <div className="text-[10px] text-accent-green font-semibold">
-                  ✓ Anyone can verify!
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Key Insight */}
-          <div className="mt-4 bg-accent-purple/10 border border-accent-purple/30 rounded-lg p-3">
-            <div className="flex items-start gap-2">
-              <span className="text-lg">💡</span>
-              <div>
-                <div className="text-xs font-semibold text-accent-purple mb-1">Key Insight</div>
-                <div className="text-[11px] text-text-secondary">
-                  The proof convinces verifiers that you know the <span className="text-accent-red font-semibold">private witness</span> that satisfies the statement,
-                  <span className="text-accent-purple font-semibold"> without ever revealing</span> what that witness is!
-                  Verifiers only see <span className="text-accent-green font-semibold">public inputs</span> and the proof.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Steps */}
-        <div className="space-y-4 mb-6">
-          {steps.map((step, idx) => {
-          const isCompleted = completedSteps.includes(step.id);
-          const isCurrent = currentStep === step.id;
-          const isAvailable = step.id === 0 || completedSteps.includes(step.id - 1);
-
-          return (
-            <div key={step.id} className="flex gap-3">
-              {/* Step Indicator */}
-              <div className="flex flex-col items-center flex-shrink-0">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-300 ${
-                  isCompleted ? 'bg-accent-green text-white shadow-lg shadow-accent-green/30' :
-                  isCurrent ? 'bg-accent-blue text-white shadow-lg shadow-accent-blue/30' :
-                  'bg-bg-tertiary text-text-tertiary'
-                }`}>
-                  {isCompleted ? '✓' : step.id + 1}
-                </div>
-                {idx < steps.length - 1 && (
-                  <div className={`w-0.5 h-full min-h-[60px] mt-2 transition-all duration-300 ${
-                    completedSteps.includes(step.id) ? 'bg-accent-green' : 'bg-border'
-                  }`}></div>
-                )}
-              </div>
-
-              {/* Step Content */}
-              <div className="flex-1">
-                <div className={`rounded-lg p-4 border transition-all duration-300 ${
+            return (
+              <div
+                key={step.id}
+                className={`rounded-lg p-3 border transition-all ${
                   isCompleted ? 'bg-accent-green/5 border-accent-green/30' :
                   isCurrent ? 'bg-accent-blue/5 border-accent-blue/30' :
                   'bg-bg-secondary border-border'
-                }`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xl">{step.icon}</span>
-                    <h3 className="text-sm font-semibold text-text-primary">{step.title}</h3>
+                }`}
+              >
+                {/* Step Header */}
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                    isCompleted ? 'bg-accent-green text-white' :
+                    isCurrent ? 'bg-accent-blue text-white' :
+                    'bg-bg-tertiary text-text-tertiary'
+                  }`}>
+                    {isCompleted ? '✓' : step.id + 1}
                   </div>
-                  <p className="text-xs text-text-secondary mb-3">{step.description}</p>
+                  <span className="text-sm font-semibold text-text-primary">{step.title}</span>
+                  <span className="text-lg">{step.icon}</span>
+                </div>
 
-                  {/* Circuit-Specific Inputs for Setup Step */}
-                  {step.id === 0 && (
-                    <div className="space-y-3 mb-3">
-                      {/* Circuit Info */}
-                      <div className="flex items-center gap-2 p-2 bg-bg-primary rounded-lg border border-accent-blue/30">
-                        <span className="text-lg">{circuits.find(c => c.id === selectedCircuit)?.icon}</span>
-                        <div className="flex-1">
-                          <div className="text-xs font-semibold text-text-primary">
-                            {circuits.find(c => c.id === selectedCircuit)?.name}
-                          </div>
-                          <div className="text-[10px] text-text-tertiary">
-                            Proving: {circuits.find(c => c.id === selectedCircuit)?.statement}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Schnorr Circuit Inputs */}
-                      {selectedCircuit === 'schnorr' && (
-                        <div>
-                          <label className="block text-xs font-medium text-text-secondary mb-2">
-                            🔒 Private Witness: Secret Key (hex, leave empty for random)
-                          </label>
-                          <input
-                            type="text"
-                            value={customSecret}
-                            onChange={(e) => setCustomSecret(e.target.value)}
-                            placeholder="0123456789abcdef... (64 chars)"
-                            className="w-full px-3 py-2 bg-bg-primary border border-accent-red/50 rounded-lg text-xs font-mono text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-red transition-all"
-                            disabled={loading !== null}
-                          />
-                          <p className="text-[10px] text-text-tertiary mt-1">
-                            <span className="text-accent-red font-semibold">Private:</span> Will be split using Shamir's Secret Sharing. Never leaves the system.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Hash Preimage Circuit Inputs */}
-                      {selectedCircuit === 'hash-preimage' && (
-                        <div>
-                          <label className="block text-xs font-medium text-text-secondary mb-2">
-                            🔒 Private Witness: Preimage (your secret)
-                          </label>
-                          <input
-                            type="text"
-                            value={hashPreimage}
-                            onChange={(e) => setHashPreimage(e.target.value)}
-                            placeholder="my_secret_password"
-                            className="w-full px-3 py-2 bg-bg-primary border border-accent-red/50 rounded-lg text-xs text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-red transition-all"
-                            disabled={loading !== null}
-                          />
-                          <p className="text-[10px] text-text-tertiary mt-1">
-                            <span className="text-accent-red font-semibold">Private:</span> The input that produces your target hash. Will be split and kept secret.
-                          </p>
-                        </div>
-                      )}
+                {/* Step Content */}
+                <div className="min-h-[120px]">
+                  {/* Setup Step */}
+                  {step.id === 0 && currentHandler && (
+                    <div className="space-y-2">
+                      {currentHandler.setupFields.map(field => renderInputField(field))}
                     </div>
                   )}
 
-                  {/* Public Inputs for Prove Step */}
+                  {/* Prove Step */}
                   {step.id === 1 && (
-                    <div className="space-y-3 mb-3">
-                      {/* Schnorr Public Inputs */}
-                      {selectedCircuit === 'schnorr' && (
-                        <div>
-                          <label className="block text-xs font-medium text-text-secondary mb-2">
-                            🌐 Public Input: Message to Sign
-                          </label>
-                          <input
-                            type="text"
-                            value={customMessage}
-                            onChange={(e) => setCustomMessage(e.target.value)}
-                            placeholder="Enter message to sign/authorize"
-                            className="w-full px-3 py-2 bg-bg-primary border border-accent-green/50 rounded-lg text-xs text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-green transition-all"
-                            disabled={loading !== null}
-                          />
-                          <p className="text-[10px] text-text-tertiary mt-1">
-                            <span className="text-accent-green font-semibold">Public:</span> This message will be bound to the proof (like signing a message).
-                            The public key from Setup is also public.
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Hash Preimage Public Inputs */}
-                      {selectedCircuit === 'hash-preimage' && (
-                        <div>
-                          <label className="block text-xs font-medium text-text-secondary mb-2">
-                            🌐 Public Input: Target Hash
-                          </label>
-                          <input
-                            type="text"
-                            value={targetHash}
-                            onChange={(e) => setTargetHash(e.target.value)}
-                            placeholder="0x1234abcd... (will compute from preimage if empty)"
-                            className="w-full px-3 py-2 bg-bg-primary border border-accent-green/50 rounded-lg text-xs font-mono text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent-green transition-all"
-                            disabled={loading !== null}
-                          />
-                          <p className="text-[10px] text-text-tertiary mt-1">
-                            <span className="text-accent-green font-semibold">Public:</span> The hash you're proving you know the preimage for.
-                            Everyone can see this, but not the preimage itself!
-                          </p>
-                        </div>
+                    <div className="text-[10px] text-text-secondary space-y-1">
+                      {setupData ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span>Threshold:</span>
+                            <span className="font-mono text-text-primary">{setupData.threshold}/{setupData.num_nodes}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Session:</span>
+                            <span className="font-mono text-text-primary truncate max-w-[100px]">{sessionId.substring(0, 16)}...</span>
+                          </div>
+                          {currentHandler?.proveFields?.map(field => {
+                            const value = circuitExtraData[field.id] as string || '';
+                            return value && (
+                              <div key={field.id} className="flex justify-between">
+                                <span>{field.label.split(':')[0]}:</span>
+                                <span className="font-mono text-text-primary truncate max-w-[100px]">{value.substring(0, 16)}...</span>
+                              </div>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <div className="text-text-tertiary">Complete setup first</div>
                       )}
                     </div>
                   )}
 
-                  <button
-                    onClick={() => handleStepAction(step.id)}
-                    disabled={!isAvailable || loading !== null}
-                    className={`px-4 py-2 rounded-lg font-medium text-xs transition-all duration-200 ${
-                      !isAvailable || loading !== null
-                        ? 'bg-bg-tertiary text-text-tertiary cursor-not-allowed opacity-50'
-                        : isCompleted
-                        ? 'bg-accent-green hover:bg-accent-green/80 text-white shadow-lg hover:shadow-xl'
-                        : 'bg-accent-blue hover:bg-accent-blue/80 text-white shadow-lg hover:shadow-xl'
-                    }`}
-                  >
-                    {loading === step.id ? '⏳ Processing...' : isCompleted ? '✓ Run Again' : `▶ Run ${step.title}`}
-                  </button>
-
-                  {/* Results */}
-                  {step.id === 0 && setupData && (
-                    <div className="mt-3 p-3 bg-bg-primary border border-border rounded-lg">
-                      <div className="text-[10px] font-semibold text-text-tertiary mb-2 uppercase">Setup Results</div>
-                      <div className="space-y-1 text-xs font-mono">
-                        <div className="flex justify-between">
-                          <span className="text-text-secondary">Threshold:</span>
-                          <span className="text-text-primary font-semibold">{setupData.threshold}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-text-secondary">Total Nodes:</span>
-                          <span className="text-text-primary font-semibold">{setupData.num_nodes}</span>
-                        </div>
-                        <div className="pt-2 border-t border-border">
-                          <div className="text-text-secondary mb-1">Public Key:</div>
-                          <div className="text-text-primary break-all text-[10px]">{setupData.public_key.substring(0, 50)}...</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {step.id === 1 && proofData && (
-                    <div className="mt-3 p-3 bg-bg-primary border border-border rounded-lg">
-                      <div className="text-[10px] font-semibold text-text-tertiary mb-2 uppercase">Proof Data</div>
-                      <div className="space-y-2 text-[10px] font-mono">
-                        <div>
-                          <div className="text-text-secondary mb-1">Commitment:</div>
-                          <div className="text-text-primary break-all bg-bg-tertiary p-2 rounded">{proofData.commitment.substring(0, 50)}...</div>
-                        </div>
-                        <div>
-                          <div className="text-text-secondary mb-1">Challenge:</div>
-                          <div className="text-text-primary break-all bg-bg-tertiary p-2 rounded">{proofData.challenge.substring(0, 50)}...</div>
-                        </div>
-                        <div>
-                          <div className="text-text-secondary mb-1">Response:</div>
-                          <div className="text-text-primary break-all bg-bg-tertiary p-2 rounded">{proofData.response.substring(0, 50)}...</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {step.id === 2 && verifyResult !== null && (
-                    <div className={`mt-3 p-4 rounded-lg text-center border-2 ${
-                      verifyResult
-                        ? 'bg-accent-green/10 border-accent-green text-accent-green'
-                        : 'bg-accent-red/10 border-accent-red text-accent-red'
-                    }`}>
-                      <div className="text-2xl mb-1">{verifyResult ? '✓' : '✗'}</div>
-                      <div className="text-sm font-semibold">
-                        {verifyResult ? 'Proof is Valid!' : 'Proof is Invalid'}
-                      </div>
+                  {/* Verify Step */}
+                  {step.id === 2 && (
+                    <div className="text-[10px] text-text-secondary space-y-1">
+                      {proofData ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span>Commitment:</span>
+                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.commitment.substring(1, 17)}...</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Challenge:</span>
+                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.challenge.substring(0, 16)}...</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Response:</span>
+                            <span className="font-mono text-text-primary truncate max-w-[100px]">{proofData.response.substring(0, 16)}...</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-text-tertiary">Generate proof first</div>
+                      )}
                     </div>
                   )}
                 </div>
+
+                {/* Action Button */}
+                <button
+                  onClick={() => handleStepAction(step.id)}
+                  disabled={!isAvailable || loading !== null || !isCircuitActive(selectedCircuit)}
+                  className={`w-full mt-2 px-3 py-1.5 rounded text-xs font-medium transition-all ${
+                    !isAvailable || loading !== null || !isCircuitActive(selectedCircuit)
+                      ? 'bg-bg-tertiary text-text-tertiary cursor-not-allowed'
+                      : isCompleted
+                      ? 'bg-accent-green hover:bg-accent-green/80 text-white'
+                      : 'bg-accent-blue hover:bg-accent-blue/80 text-white'
+                  }`}
+                >
+                  {loading === step.id ? '⏳ Processing...' : isCompleted ? '↻ Re-run' : `▶ Run`}
+                </button>
+
+                {/* Result Badge */}
+                {step.id === 2 && verifyResult !== null && (
+                  <div className={`mt-2 py-1 px-2 rounded text-center text-xs font-semibold ${
+                    verifyResult ? 'bg-accent-green/20 text-accent-green' : 'bg-accent-red/20 text-accent-red'
+                  }`}>
+                    {verifyResult ? '✓ Valid' : '✗ Invalid'}
+                  </div>
+                )}
+
+                {/* Inline Request/Response */}
+                {renderRequestResponse(step.id)}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
         </div>
 
-        {/* Request/Response Inspector */}
-        {Object.keys(requestResponses).length > 0 && (
-          <div className="mb-6 bg-bg-secondary rounded-lg p-4 border border-border">
-            <h3 className="text-sm font-semibold text-text-primary mb-3">🔍 Request/Response Inspector</h3>
-            <div className="space-y-3">
-              {Object.entries(requestResponses).map(([stepId, data]) => (
-                <details key={stepId} className="bg-bg-primary rounded-lg border border-border">
-                  <summary className="px-3 py-2 cursor-pointer hover:bg-bg-tertiary transition-colors text-xs font-medium text-text-primary">
-                    Step {parseInt(stepId) + 1}: {steps[parseInt(stepId)].title} - {new Date(data.timestamp).toLocaleTimeString()}
-                  </summary>
-                  <div className="p-3 space-y-3 border-t border-border">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-semibold text-accent-blue uppercase">📤 Request</span>
-                        <span className="text-[10px] text-text-tertiary">Sent to coordinator</span>
-                      </div>
-                      <pre className="text-[10px] font-mono bg-bg-tertiary p-3 rounded overflow-x-auto text-text-primary">
-                        {JSON.stringify(data.request, null, 2)}
-                      </pre>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[10px] font-semibold text-accent-green uppercase">📥 Response</span>
-                        <span className="text-[10px] text-text-tertiary">Received from coordinator</span>
-                      </div>
-                      <pre className="text-[10px] font-mono bg-bg-tertiary p-3 rounded overflow-x-auto text-text-primary">
-                        {JSON.stringify(data.response, null, 2)}
-                      </pre>
-                    </div>
-                  </div>
-                </details>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Privacy Details - Collapsible */}
+        {setupData && shares.length > 0 && (
+          <details className="mb-4" open={showPrivacyDetails}>
+            <summary
+              className="cursor-pointer text-sm font-semibold text-accent-purple flex items-center gap-2 mb-2"
+              onClick={() => setShowPrivacyDetails(!showPrivacyDetails)}
+            >
+              🛡️ Blind Proving Details
+              <span className="text-[10px] text-text-tertiary font-normal">(click to expand)</span>
+            </summary>
 
-        {/* Share Distribution Visualization */}
-        {setupData && (
-          <div className="mb-6 bg-bg-secondary rounded-lg p-4 border border-border">
-            <h3 className="text-sm font-semibold text-text-primary mb-3">🔐 Share Distribution Flow</h3>
-
-            {/* Distribution Flow Diagram */}
-            <div className="mb-4 bg-bg-primary rounded-lg p-4 border border-border">
-              <div className="flex flex-col items-center gap-4">
-                {/* Coordinator with Secret */}
-                <div className="relative">
-                  <div className="flex flex-col items-center">
-                    <div className="w-16 h-16 bg-gradient-to-br from-accent-purple to-accent-blue rounded-full flex items-center justify-center text-2xl shadow-lg">
-                      🎯
+            <div className="bg-gradient-to-br from-purple-900/10 to-blue-900/10 border border-purple-500/30 rounded-lg p-3">
+              {/* Node Distribution - Compact */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {shares.map((share) => (
+                  <div key={share.node_id} className="bg-bg-primary/50 rounded p-2 text-center">
+                    <div className="w-6 h-6 mx-auto bg-purple-600 rounded-full flex items-center justify-center text-white text-xs font-bold mb-1">
+                      {share.node_id}
                     </div>
-                    <div className="text-xs font-semibold text-text-primary mt-2">Coordinator</div>
-                    <div className="text-[10px] text-accent-purple mt-1 px-2 py-0.5 bg-accent-purple/10 rounded">Has Secret 🔑</div>
+                    <div className="text-[9px] text-text-secondary">Share #{share.share_index}</div>
+                    <div className="text-[8px] text-purple-300">🛡️ Witness Hidden</div>
                   </div>
+                ))}
+              </div>
+
+              {/* Privacy Guarantee */}
+              <div className="text-[10px] text-text-secondary space-y-1">
+                <div className="flex items-center gap-1">
+                  <span className="text-purple-400">✓</span>
+                  <span>Public witness <span className="font-semibold text-text-primary">"{publicWitness}"</span> never sent to nodes</span>
                 </div>
-
-                {/* Distribution Arrows */}
-                <div className="flex flex-col items-center gap-1">
-                  <div className="text-2xl text-accent-yellow animate-bounce">↓</div>
-                  <div className="text-[10px] text-text-tertiary font-medium px-3 py-1 bg-bg-tertiary rounded-full">
-                    Shamir Split ({setupData.threshold} of {setupData.num_nodes})
-                  </div>
-                  <div className="text-2xl text-accent-yellow animate-bounce" style={{animationDelay: '0.2s'}}>↓</div>
+                <div className="flex items-center gap-1">
+                  <span className="text-purple-400">✓</span>
+                  <span>Nodes only receive commitment hash + secret share</span>
                 </div>
-
-                {/* Distributed Shares to Nodes */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 w-full">
-                  {Array.from({ length: setupData.num_nodes }, (_, i) => (
-                    <div key={i} className="relative">
-                      <div className="bg-bg-secondary border-2 border-accent-blue/30 rounded-lg p-3 text-center hover:border-accent-blue hover:shadow-lg transition-all duration-300">
-                        <div className="text-2xl mb-1">💻</div>
-                        <div className="text-accent-blue font-bold text-xs mb-1">Node {i + 1}</div>
-                        <div className="h-px bg-border my-2"></div>
-                        <div className="flex flex-col gap-1">
-                          <div className="text-[9px] text-text-tertiary">Received:</div>
-                          <div className="bg-accent-green/10 border border-accent-green/30 rounded px-2 py-1">
-                            <div className="text-[10px] font-mono text-accent-green font-semibold">Share #{i + 1}</div>
-                          </div>
-                          <div className="text-[9px] font-mono text-text-secondary mt-1">
-                            (x={i + 1}, y=f({i + 1}))
-                          </div>
-                        </div>
-                        <div className="mt-2 text-[10px] text-accent-green flex items-center justify-center gap-1">
-                          <span>🔒</span>
-                          <span>Isolated</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex items-center gap-1">
+                  <span className="text-purple-400">✓</span>
+                  <span>Witness revealed only at verification time</span>
                 </div>
               </div>
             </div>
-
-            {/* Privacy Properties */}
-            <div className="bg-accent-green/10 border border-accent-green/30 rounded-lg p-3">
-              <div className="text-xs font-semibold text-accent-green mb-2">✓ Privacy Guarantees</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <div className="flex items-start gap-2">
-                  <span className="text-accent-green mt-0.5">✓</span>
-                  <span className="text-[11px] text-text-secondary">Secret never leaves coordinator</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-accent-green mt-0.5">✓</span>
-                  <span className="text-[11px] text-text-secondary">Each node gets unique share only</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-accent-green mt-0.5">✓</span>
-                  <span className="text-[11px] text-text-secondary">Shares appear random</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="text-accent-green mt-0.5">✓</span>
-                  <span className="text-[11px] text-text-secondary">Need {setupData.threshold}/{setupData.num_nodes} to reconstruct</span>
-                </div>
-                <div className="flex items-start gap-2 md:col-span-2">
-                  <span className="text-accent-green mt-0.5">✓</span>
-                  <span className="text-[11px] text-text-secondary">Any {setupData.threshold - 1} or fewer shares reveal NOTHING (information-theoretic security)</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          </details>
         )}
-
-        {/* Progress Summary */}
-        <div className="pt-6 border-t border-border">
-          <div className="bg-bg-secondary rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold text-text-primary">Workflow Progress</span>
-              <span className="text-xs font-mono px-2 py-1 bg-bg-tertiary rounded">
-                <span className="text-accent-green">{completedSteps.length}</span>
-                <span className="text-text-tertiary"> / {steps.length}</span>
-              </span>
-            </div>
-            <div className="h-2 bg-bg-tertiary rounded-full overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-accent-blue to-accent-green transition-all duration-500 rounded-full"
-                style={{ width: `${(completedSteps.length / steps.length) * 100}%` }}
-              ></div>
-            </div>
-            <div className="mt-2 text-xs text-text-tertiary text-center">
-              {completedSteps.length === steps.length
-                ? '✓ All steps completed!'
-                : `${steps.length - completedSteps.length} step${steps.length - completedSteps.length !== 1 ? 's' : ''} remaining`
-              }
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
