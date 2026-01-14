@@ -5,6 +5,7 @@
 //! This crate provides:
 //! - Shamir's Secret Sharing for distributing secrets
 //! - Schnorr proof generation and verification
+//! - Hash Preimage proof generation and verification
 //! - Lagrange interpolation for aggregating proof fragments
 //!
 //! ## Example
@@ -26,10 +27,26 @@
 
 pub mod shamir;
 pub mod schnorr;
+pub mod hash_preimage;
+pub mod commitment;
 pub mod errors;
+
+#[cfg(test)]
+mod integration_test;
+
+#[cfg(test)]
+mod rng_test;
 
 pub use shamir::{SecretShare, ShareSet};
 pub use schnorr::{Commitment, ProofFragment, DistributedProof, PublicParams, generate_challenge};
+pub use hash_preimage::{
+    HashPublicParams, HashCommitment, HashProofFragment, HashPreimageProof,
+    compute_sha256, hash_to_field,
+};
+pub use commitment::{
+    WitnessCommitment, commit_witness, verify_commitment,
+    generate_challenge_from_commitment, COMMITMENT_SIZE, SALT_SIZE,
+};
 pub use errors::{ProverError, Result};
 
 /// Re-export arkworks types

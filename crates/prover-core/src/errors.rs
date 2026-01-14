@@ -43,6 +43,10 @@ pub enum ProverError {
     /// Not enough fragments provided to aggregate proof
     #[error("Insufficient fragments: need at least {needed}, got {got}")]
     InsufficientFragments { needed: usize, got: usize },
+
+    /// Invalid witness commitment
+    #[error("Invalid witness commitment: {0}")]
+    InvalidCommitment(String),
 }
 
 /// Result type for cryptographic operations

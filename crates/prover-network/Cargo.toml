@@ -12,6 +12,7 @@ serde_json.workspace = true
 ark-serialize.workspace = true
 thiserror.workspace = true
 ark-ec.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 ark-std.workspace = true

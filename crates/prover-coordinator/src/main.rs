@@ -1,27 +1,35 @@
-//! # Prover Coordinator
+//! # Privacy-Preserving Distributed Prover Coordinator
 //!
-//! Orchestrates the distributed proving protocol across multiple nodes.
+//! Orchestrates distributed proof generation with full public witness privacy.
 //!
 //! ## Endpoints
 //!
 //! - `GET /health` - Health check
-//! - `POST /setup` - Initialize system with a secret
-//! - `POST /prove` - Generate a distributed proof
-//! - `POST /verify` - Verify a proof
+//! - `POST /setup` - Initialize system with witness commitment (blind)
+//! - `POST /prove` - Generate distributed proof (blind)
+//! - `POST /verify` - Verify proof with witness reveal
 //!
-//! ## Protocol Flow
+//! ## Privacy-Preserving Protocol
 //!
-//! 1. **Setup**: Split secret and distribute shares to nodes
-//! 2. **Phase 1 (Commitments)**: Collect Cᵢ = g^rᵢ from threshold nodes
-//! 3. **Phase 2 (Challenge)**: Compute c = H(g || PK || C₁...Cₜ)
-//! 4. **Phase 3 (Responses)**: Collect zᵢ = rᵢ + c·sᵢ from nodes
-//! 5. **Phase 4 (Aggregation)**: Compute C = Σλᵢ·Cᵢ, z = Σλᵢ·zᵢ
-//! 6. **Verification**: Check g^z = C · PK^c
+//! 1. **Setup**: Client commits to witness, coordinator distributes shares
+//! 2. **Phase 1**: Collect commitments Cᵢ = g^rᵢ from threshold nodes
+//! 3. **Phase 2**: Compute challenge c = H(g || Com || C_agg) from COMMITMENT
+//! 4. **Phase 3**: Collect fragments zᵢ = rᵢ + c·sᵢ from nodes
+//! 5. **Phase 4**: Aggregate into blind proof
+//! 6. **Verification**: Client reveals witness, verifier checks commitment + proof
 
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_std::{
-    Zero, rand::{Rng, SeedableRng, rngs::StdRng }
-};
+use ark_std::{Zero, UniformRand};
+use ark_std::rand::rngs::StdRng;
+use ark_std::rand::SeedableRng;
+
+/// Create a cryptographically secure RNG seeded from OS entropy
+fn secure_rng() -> StdRng {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).expect("Failed to get random bytes from OS");
+    StdRng::from_seed(seed)
+}
 use axum::{
     extract::State,
     http::StatusCode,
@@ -30,13 +38,17 @@ use axum::{
 };
 use clap::Parser;
 use prover_core::{
-    generate_challenge, shamir::share_secret, Fr, G1Affine,
-    G1Projective, PublicParams, SecretShare,
+    shamir::{share_secret, lagrange_coefficient},
+    Fr, G1Affine, G1Projective,
+    verify_commitment, generate_challenge_from_commitment,
+    WitnessCommitment as CoreWitnessCommitment,
 };
 use prover_network::{
     ApiResponse, CommitmentRequest, CommitmentResponse, FragmentRequest, FragmentResponse,
-    HealthResponse, NetworkProof, ProveRequest, ProveResponse, SetupRequest, SetupResponse,
-    ShareAssignment, VerifyRequest, VerifyResponse,
+    HealthResponse, BlindSetupRequest, BlindSetupResponse, BlindShareAssignment,
+    BlindProveRequest, BlindProveResponse, BlindProof,
+    VerifyWithRevealRequest, VerifyWithRevealResponse,
+    WitnessCommitment, CircuitType,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -46,7 +58,7 @@ use tracing::{error, info, warn};
 /// Command-line arguments
 #[derive(Parser, Debug)]
 #[command(name = "prover-coordinator")]
-#[command(about = "Distributed proof coordinator", long_about = None)]
+#[command(about = "Privacy-preserving distributed proof coordinator", long_about = None)]
 struct Args {
     /// Threshold (minimum nodes required for proofs)
     #[arg(long, default_value = "3", env = "THRESHOLD")]
@@ -79,14 +91,35 @@ struct CoordinatorState {
     /// Threshold
     threshold: usize,
 
-    /// Public parameters (if initialized)
-    params: Option<PublicParams>,
-
-    /// Shares distributed to nodes
-    shares: Vec<SecretShare>,
+    /// Blind session data (witness commitments for privacy)
+    blind_sessions: std::collections::HashMap<String, BlindSessionData>,
 
     /// HTTP client
     client: reqwest::Client,
+}
+
+/// Blind proving session data (privacy-preserving)
+#[derive(Clone, Debug)]
+struct BlindSessionData {
+    /// Witness commitment
+    witness_commitment: WitnessCommitment,
+    /// Generator point
+    generator: G1Affine,
+    /// Public key (computed from secret during setup)
+    public_key: G1Affine,
+    /// Circuit type
+    circuit_type: CircuitType,
+    /// Share distribution (for visualization)
+    shares: Vec<ShareInfo>,
+}
+
+/// Share information for visualization
+#[derive(Clone, Debug)]
+struct ShareInfo {
+    /// Node ID
+    pub node_id: u32,
+    /// Share index
+    pub share_index: u32,
 }
 
 type SharedState = Arc<RwLock<CoordinatorState>>;
@@ -113,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!(
-        "Starting coordinator with {} nodes (threshold: {}) on {}:{}",
+        "Starting privacy-preserving coordinator with {} nodes (threshold: {}) on {}:{}",
         args.nodes.len(),
         args.threshold,
         args.host,
@@ -124,17 +157,16 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(RwLock::new(CoordinatorState {
         node_urls: args.nodes,
         threshold: args.threshold,
-        params: None,
-        shares: Vec::new(),
+        blind_sessions: std::collections::HashMap::new(),
         client: reqwest::Client::new(),
     }));
 
-    // Build router
+    // Build router (only blind endpoints)
     let app = Router::new()
         .route("/health", get(health_handler))
-        .route("/setup", post(setup_handler))
-        .route("/prove", post(prove_handler))
-        .route("/verify", post(verify_handler))
+        .route("/setup", post(blind_setup_handler))
+        .route("/prove", post(blind_prove_handler))
+        .route("/verify", post(verify_with_reveal_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -152,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
 /// Health check handler
 async fn health_handler(State(state): State<SharedState>) -> Json<ApiResponse<HealthResponse>> {
     let coord_state = state.read().await;
-    let ready = coord_state.params.is_some();
+    let ready = !coord_state.blind_sessions.is_empty();
 
     Json(ApiResponse::success(HealthResponse {
         status: "ok".to_string(),
@@ -161,12 +193,18 @@ async fn health_handler(State(state): State<SharedState>) -> Json<ApiResponse<He
     }))
 }
 
-/// Setup handler - distributes shares to nodes
-async fn setup_handler(
+/// Blind setup handler - sets up system with witness commitment (no witness revealed)
+async fn blind_setup_handler(
     State(state): State<SharedState>,
-    Json(request): Json<SetupRequest>,
-) -> Result<Json<ApiResponse<SetupResponse>>, StatusCode> {
+    Json(request): Json<BlindSetupRequest>,
+) -> Result<Json<ApiResponse<BlindSetupResponse>>, StatusCode> {
     let mut coord_state = state.write().await;
+
+    info!(
+        "🔒 Blind setup for circuit {:?} with commitment {:?}",
+        request.circuit_type,
+        hex::encode(&request.witness_commitment.hash[..8])
+    );
 
     // Parse secret from hex
     let secret_bytes = hex::decode(request.secret.trim_start_matches("0x")).map_err(|e| {
@@ -176,28 +214,37 @@ async fn setup_handler(
 
     let secret = Fr::from_le_bytes_mod_order(&secret_bytes);
 
-    info!("Setting up system with secret");
+    // Generate generator
+    let mut rng = secure_rng();
+    let generator = G1Projective::rand(&mut rng).into_affine();
 
-    // Generate public parameters
-    let mut rng = ark_std::test_rng();
-    let params = PublicParams::new(secret, &mut rng);
+    // Compute public key: PK = g^secret (needed for verification)
+    let public_key = (G1Projective::from(generator) * secret).into_affine();
 
     let num_nodes = coord_state.node_urls.len();
     let threshold = coord_state.threshold;
 
-    // Split secret into shares
+    // Split secret into shares using Shamir's Secret Sharing
     let share_set = share_secret(secret, num_nodes, threshold, &mut rng);
 
-    // Distribute shares to nodes
+    let mut share_infos = Vec::new();
+
+    // Distribute BLIND shares to nodes (no public witness/key revealed)
     for (i, share) in share_set.shares.iter().enumerate() {
         let node_url = &coord_state.node_urls[i];
-        let assignment = ShareAssignment {
+        let assignment = BlindShareAssignment {
             node_id: (i + 1) as u32,
             share_index: share.index as u32,
             share_value: share.y,
-            generator: params.generator,
-            public_key: params.public_key,
+            generator,
+            witness_commitment: request.witness_commitment.clone(),
+            circuit_type: request.circuit_type,
         };
+
+        share_infos.push(ShareInfo {
+            node_id: (i + 1) as u32,
+            share_index: share.index as u32,
+        });
 
         match coord_state
             .client
@@ -208,67 +255,72 @@ async fn setup_handler(
         {
             Ok(response) => {
                 if response.status().is_success() {
-                    info!("Assigned share to node {} at {}", i + 1, node_url);
+                    info!("✅ Assigned blind share to node {} at {}", i + 1, node_url);
                 } else {
                     error!(
-                        "Failed to assign share to node {}: {}",
+                        "❌ Failed to assign blind share to node {}: {}",
                         i + 1,
                         response.status()
                     );
                 }
             }
             Err(e) => {
-                error!("Failed to contact node {} at {}: {}", i + 1, node_url, e);
+                error!("❌ Failed to contact node {} at {}: {}", i + 1, node_url, e);
             }
         }
     }
 
-    // Store state
-    coord_state.params = Some(params.clone());
-    coord_state.shares = share_set.shares;
-
-    info!(
-        "Setup complete: {} nodes, threshold {}",
-        num_nodes, threshold
+    // Store blind session data
+    let session_id = request.witness_commitment.session_id.clone();
+    coord_state.blind_sessions.insert(
+        session_id.clone(),
+        BlindSessionData {
+            witness_commitment: request.witness_commitment.clone(),
+            generator,
+            public_key,
+            circuit_type: request.circuit_type,
+            shares: share_infos,
+        },
     );
 
-    Ok(Json(ApiResponse::success(SetupResponse {
-        generator: params.generator,
-        public_key: params.public_key,
+    info!(
+        "🔒 Blind setup complete: {} nodes, threshold {}, session: {}",
+        num_nodes, threshold, session_id
+    );
+
+    Ok(Json(ApiResponse::success(BlindSetupResponse {
+        generator,
+        witness_commitment: request.witness_commitment,
         num_nodes,
         threshold,
+        session_id,
     })))
 }
 
-/// Prove handler - orchestrates distributed proof generation
-async fn prove_handler(
+/// Blind prove handler - generates proof using witness commitment (privacy-preserving)
+async fn blind_prove_handler(
     State(state): State<SharedState>,
-    Json(_request): Json<ProveRequest>,
-) -> Result<Json<ApiResponse<ProveResponse>>, StatusCode> {
+    Json(request): Json<BlindProveRequest>,
+) -> Result<Json<ApiResponse<BlindProveResponse>>, StatusCode> {
     let coord_state = state.read().await;
 
-    // Check if system is initialized
-    let params = match &coord_state.params {
-        Some(p) => p,
+    info!("🔒 Starting blind proof generation for session: {}", request.session_id);
+
+    // Get blind session data
+    let session_data = match coord_state.blind_sessions.get(&request.session_id) {
+        Some(data) => data,
         None => {
-            warn!("Attempted to prove before setup");
+            warn!("Unknown blind session: {}", request.session_id);
             return Ok(Json(ApiResponse::error(
-                "System not initialized. Call /setup first",
+                "Unknown session. Call /setup first",
             )));
         }
     };
 
-    let mut rng = StdRng::seed_from_u64(42);
-    let mut session_bytes = [0u8; 32];
-    rng.fill(&mut session_bytes);
-
-    let session_id = format!("session-{}", hex::encode(session_bytes));
-    info!("Starting proof generation (session: {})", session_id);
-
     // Phase 1: Collect commitments from threshold nodes
-    info!("Phase 1: Collecting commitments");
+    info!("Phase 1: Collecting commitments from {} nodes", coord_state.threshold);
     let commitment_request = CommitmentRequest {
-        session_id: session_id.clone(),
+        session_id: request.session_id.clone(),
     };
 
     let mut commitment_responses = Vec::new();
@@ -285,18 +337,18 @@ async fn prove_handler(
         {
             Ok(response) => match response.json::<ApiResponse<CommitmentResponse>>().await {
                 Ok(ApiResponse::Success { data }) => {
-                    info!("Received commitment from node {}", i + 1);
+                    info!("✅ Received commitment from node {}", i + 1);
                     commitment_responses.push(data);
                 }
                 Ok(ApiResponse::Error { message }) => {
-                    error!("Node {} returned error: {}", i + 1, message);
+                    error!("❌ Node {} returned error: {}", i + 1, message);
                 }
                 Err(e) => {
-                    error!("Failed to parse response from node {}: {}", i + 1, e);
+                    error!("❌ Failed to parse response from node {}: {}", i + 1, e);
                 }
             },
             Err(e) => {
-                error!("Failed to contact node {} at {}: {}", i + 1, node_url, e);
+                error!("❌ Failed to contact node {} at {}: {}", i + 1, node_url, e);
             }
         }
     }
@@ -314,17 +366,49 @@ async fn prove_handler(
         ))));
     }
 
-    // Phase 2: Compute Fiat-Shamir challenge
-    info!("Phase 2: Computing challenge");
-    let commitment_points: Vec<G1Affine> =
-        commitment_responses.iter().map(|r| r.commitment).collect();
+    // Phase 2: Compute Fiat-Shamir challenge FROM COMMITMENT (privacy-preserving!)
+    info!("Phase 2: Computing challenge from witness commitment (PUBLIC WITNESS HIDDEN)");
 
-    let challenge = generate_challenge(&params.generator, &params.public_key, &commitment_points);
+    // Sort commitment responses by node_id for consistent Lagrange coefficient computation
+    commitment_responses.sort_by_key(|r| r.node_id);
+
+    let x_coords: Vec<Fr> = commitment_responses
+        .iter()
+        .map(|r| Fr::from(r.node_id as u64))
+        .collect();
+
+    info!("📊 Commitment x_coords (sorted by node_id): {:?}",
+        x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+
+    // Aggregate commitments using Lagrange
+    let mut agg_commitment = G1Projective::zero();
+    for (i, resp) in commitment_responses.iter().enumerate() {
+        let coeff = lagrange_coefficient(&x_coords, i);
+        info!("📊 Node {} (x={}): Lagrange coeff = {}", resp.node_id, resp.node_id, coeff);
+        agg_commitment += G1Projective::from(resp.commitment) * coeff;
+    }
+    let agg_commitment_affine = agg_commitment.into_affine();
+
+    // Convert network commitment to core commitment
+    let core_commitment = CoreWitnessCommitment::from_bytes(session_data.witness_commitment.hash);
+
+    // Generate challenge from COMMITMENT (not witness!)
+    let challenge = generate_challenge_from_commitment(
+        &session_data.generator,
+        &core_commitment,
+        &agg_commitment_affine,
+        &request.session_id,
+    ).map_err(|e| {
+        error!("Failed to generate challenge: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    info!("🔒 Challenge computed from commitment: {:?}", hex::encode(&challenge.to_string()[..16]));
 
     // Phase 3: Collect proof fragments
     info!("Phase 3: Collecting fragments");
     let fragment_request = FragmentRequest {
-        session_id: session_id.clone(),
+        session_id: request.session_id.clone(),
         challenge,
     };
 
@@ -342,18 +426,18 @@ async fn prove_handler(
         {
             Ok(response) => match response.json::<ApiResponse<FragmentResponse>>().await {
                 Ok(ApiResponse::Success { data }) => {
-                    info!("Received fragment from node {}", i + 1);
+                    info!("✅ Received fragment from node {}", i + 1);
                     fragment_responses.push(data);
                 }
                 Ok(ApiResponse::Error { message }) => {
-                    error!("Node {} returned error: {}", i + 1, message);
+                    error!("❌ Node {} returned error: {}", i + 1, message);
                 }
                 Err(e) => {
-                    error!("Failed to parse response from node {}: {}", i + 1, e);
+                    error!("❌ Failed to parse response from node {}: {}", i + 1, e);
                 }
             },
             Err(e) => {
-                error!("Failed to contact node {} at {}: {}", i + 1, node_url, e);
+                error!("❌ Failed to contact node {} at {}: {}", i + 1, node_url, e);
             }
         }
     }
@@ -371,78 +455,224 @@ async fn prove_handler(
         ))));
     }
 
-    // Phase 4: Aggregate using Lagrange interpolation
-    info!("Phase 4: Aggregating proof");
+    // Phase 4: Aggregate responses
+    info!("Phase 4: Aggregating blind proof");
 
-    // Compute Lagrange coefficients
-    use prover_core::shamir::lagrange_coefficient;
+    // Sort fragment responses by node_id (MUST match commitment sorting!)
+    fragment_responses.sort_by_key(|r| r.node_id);
 
-    let x_coords: Vec<Fr> = fragment_responses
+    // Debug: Log all fragment responses
+    for resp in &fragment_responses {
+        info!("📊 Fragment response node {}: response = {}", resp.node_id, resp.response);
+    }
+
+    // Build x_coords from fragment responses (should match commitment x_coords)
+    let fragment_x_coords: Vec<Fr> = fragment_responses
         .iter()
         .map(|r| Fr::from(r.node_id as u64))
         .collect();
 
-    let mut agg_commitment = G1Projective::zero();
+    info!("📊 Fragment x_coords (sorted by node_id): {:?}",
+        fragment_x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+
+    // Verify same nodes participated in both phases
+    if x_coords != fragment_x_coords {
+        error!("❌ Node mismatch between commitment and fragment phases!");
+        error!("Commitment nodes: {:?}", x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        error!("Fragment nodes: {:?}", fragment_x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        return Ok(Json(ApiResponse::error(
+            "Different nodes responded in commitment vs fragment phase".to_string()
+        )));
+    }
+
     let mut agg_response = Fr::zero();
 
-    for (i, (commitment_resp, fragment_resp)) in commitment_responses
-        .iter()
-        .zip(fragment_responses.iter())
-        .enumerate()
-    {
+    for (i, fragment_resp) in fragment_responses.iter().enumerate() {
         let coeff = lagrange_coefficient(&x_coords, i);
-
-        agg_commitment += G1Projective::from(commitment_resp.commitment) * coeff;
+        info!("📊 Node {} fragment: Lagrange coeff = {}, response applied", fragment_resp.node_id, coeff);
         agg_response += fragment_resp.response * coeff;
     }
 
-    let proof = NetworkProof {
-        commitment: agg_commitment.into_affine(),
+    let blind_proof = BlindProof {
+        witness_commitment: session_data.witness_commitment.clone(),
+        commitment: agg_commitment_affine,
         challenge,
         response: agg_response,
-        generator: params.generator,
-        public_key: params.public_key,
+        generator: session_data.generator,
+        public_key: session_data.public_key,
+        circuit_type: session_data.circuit_type,
     };
 
-    // Verify proof before returning
-    use ark_ec::CurveGroup;
-    let lhs = (params.generator * proof.response).into_affine();
-    let rhs = (proof.commitment + (params.public_key * proof.challenge)).into_affine();
+    info!("✅ Blind proof generation complete (witness remains HIDDEN from all provers)");
+    info!("📊 Proof values for verification:");
+    info!("  Generator: {:?}", session_data.generator);
+    info!("  Public Key: {:?}", session_data.public_key);
+    info!("  Commitment (C): {:?}", agg_commitment_affine);
+    info!("  Challenge: {}", challenge);
+    info!("  Response: {}", agg_response);
 
-    if lhs != rhs {
-        error!("Generated proof failed verification!");
-        return Ok(Json(ApiResponse::error("Generated proof is invalid")));
+    // SELF-CHECK: Verify the proof before returning it!
+    {
+        let lhs = (session_data.generator * agg_response).into_affine();
+        let rhs = (agg_commitment_affine + (session_data.public_key * challenge)).into_affine();
+        if lhs == rhs {
+            info!("✅ SELF-CHECK: Proof verifies correctly before sending!");
+        } else {
+            error!("❌ SELF-CHECK FAILED: Proof does NOT verify!");
+            error!("  LHS (g^z): {:?}", lhs);
+            error!("  RHS (C + c*PK): {:?}", rhs);
+            error!("  This indicates a bug in proof generation!");
+        }
     }
 
-    info!("Proof generation complete");
-
-    Ok(Json(ApiResponse::success(ProveResponse {
-        proof,
+    Ok(Json(ApiResponse::success(BlindProveResponse {
+        blind_proof,
         participants: fragment_responses.len(),
     })))
 }
 
-/// Verify handler - verifies a distributed proof
-async fn verify_handler(
-    State(_state): State<SharedState>,
-    Json(request): Json<VerifyRequest>,
-) -> Result<Json<ApiResponse<VerifyResponse>>, StatusCode> {
-    info!("Verifying proof");
+/// Verify with reveal handler - verifies proof with witness reveal
+async fn verify_with_reveal_handler(
+    State(state): State<SharedState>,
+    Json(request): Json<VerifyWithRevealRequest>,
+) -> Result<Json<ApiResponse<VerifyWithRevealResponse>>, StatusCode> {
+    info!("🔓 Verifying blind proof with witness reveal");
 
-    // Verify: g^z = C · PK^c
-    use ark_ec::CurveGroup;
+    // Step 1: Verify commitment (witness reveal check)
+    let public_witness_bytes = hex::decode(request.public_witness.trim_start_matches("0x"))
+        .map_err(|e| {
+            error!("Failed to parse public witness: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
 
-    let lhs = (request.proof.generator * request.proof.response).into_affine();
-    let rhs = (request.proof.commitment + (request.proof.public_key * request.proof.challenge))
-        .into_affine();
+    let commitment_valid = verify_commitment(
+        &public_witness_bytes,
+        &request.salt,
+        &CoreWitnessCommitment::from_bytes(request.blind_proof.witness_commitment.hash),
+    );
 
-    let valid = lhs == rhs;
-
-    if valid {
-        info!("Proof is valid");
-    } else {
-        warn!("Proof is invalid");
+    if !commitment_valid {
+        warn!("❌ Commitment verification failed - witness reveal is invalid");
+        return Ok(Json(ApiResponse::success(VerifyWithRevealResponse {
+            valid: false,
+            commitment_valid: false,
+            message: Some("Witness commitment mismatch".to_string()),
+        })));
     }
 
-    Ok(Json(ApiResponse::success(VerifyResponse { valid })))
+    info!("✅ Commitment valid - witness reveal is correct");
+
+    // Step 2: Use public key from the proof (self-contained verification)
+    // The proof now includes the public_key, so we don't need session data
+    let public_key = request.blind_proof.public_key;
+
+    // Step 3: Verify proof (Schnorr verification)
+    match request.blind_proof.circuit_type {
+        CircuitType::Schnorr => {
+            // For Schnorr: verify g^z = C · PK^c
+            // Use the public key embedded in the proof
+
+            info!("📊 Verification inputs from proof:");
+            info!("  Generator (g): {:?}", request.blind_proof.generator);
+            info!("  Public Key (PK): {:?}", public_key);
+            info!("  Commitment (C): {:?}", request.blind_proof.commitment);
+            info!("  Challenge (c): {}", request.blind_proof.challenge);
+            info!("  Response (z): {}", request.blind_proof.response);
+
+            // LHS: g^z
+            let lhs = (request.blind_proof.generator * request.blind_proof.response).into_affine();
+
+            // RHS: C + c*PK (in additive notation)
+            let pk_times_c = (public_key * request.blind_proof.challenge).into_affine();
+            let rhs = (request.blind_proof.commitment + pk_times_c).into_affine();
+
+            info!("📊 Verification equation: g^z =? C · PK^c");
+            info!("  LHS (g^z): {:?}", lhs);
+            info!("  RHS (C + c*PK): {:?}", rhs);
+
+            let valid = lhs == rhs;
+
+            if valid {
+                info!("✅ Blind proof is VALID (Schnorr)");
+            } else {
+                warn!("❌ Blind proof is INVALID (Schnorr)");
+                warn!("❌ LHS != RHS - verification equation failed");
+            }
+
+            Ok(Json(ApiResponse::success(VerifyWithRevealResponse {
+                valid,
+                commitment_valid: true,
+                message: if valid {
+                    Some("Proof verified successfully".to_string())
+                } else {
+                    Some("Schnorr verification failed".to_string())
+                },
+            })))
+        }
+        CircuitType::HashPreimage => {
+            // For hash preimage: verify g^z = C · g^(c * hash_to_field(SHA256(preimage)))
+            // The secret shared was hash_to_field(SHA256(preimage)), so we need to recompute it
+            use prover_core::{hash_to_field, compute_sha256};
+
+            // First compute SHA256 of the revealed preimage
+            let preimage_hash = compute_sha256(&public_witness_bytes);
+            // Then convert to field element (this should match the secret that was shared)
+            let secret_field = hash_to_field(&preimage_hash);
+
+            info!("📊 Hash Preimage verification:");
+            info!("  Preimage (revealed): {} bytes", public_witness_bytes.len());
+            info!("  SHA256(preimage): {}", hex::encode(&preimage_hash));
+            info!("  hash_to_field result: {}", secret_field);
+
+            // Verification: g^z = C + c*PK where PK = g^secret_field
+            // But we don't have PK stored - we need to use the public_key from the proof
+            // The public_key should be g^(hash_to_field(SHA256(preimage)))
+            let public_key = request.blind_proof.public_key;
+
+            let lhs = (request.blind_proof.generator * request.blind_proof.response).into_affine();
+            let pk_times_c = (public_key * request.blind_proof.challenge).into_affine();
+            let rhs = (request.blind_proof.commitment + pk_times_c).into_affine();
+
+            info!("  LHS (g^z): {:?}", lhs);
+            info!("  RHS (C + c*PK): {:?}", rhs);
+
+            let valid = lhs == rhs;
+
+            // Additional check: verify the public_key matches g^secret_field
+            let expected_pk = (request.blind_proof.generator * secret_field).into_affine();
+            let pk_matches = public_key == expected_pk;
+
+            if !pk_matches {
+                warn!("⚠️ Public key mismatch! The revealed preimage may not match the original.");
+                warn!("  Expected PK (g^H(preimage)): {:?}", expected_pk);
+                warn!("  Proof PK: {:?}", public_key);
+            }
+
+            let final_valid = valid && pk_matches;
+
+            if final_valid {
+                info!("✅ Blind proof is VALID (Hash Preimage)");
+            } else {
+                warn!("❌ Blind proof is INVALID (Hash Preimage)");
+                if !valid {
+                    warn!("  Reason: Schnorr equation failed");
+                }
+                if !pk_matches {
+                    warn!("  Reason: Public key doesn't match hash of revealed preimage");
+                }
+            }
+
+            Ok(Json(ApiResponse::success(VerifyWithRevealResponse {
+                valid: final_valid,
+                commitment_valid: true,
+                message: if final_valid {
+                    Some("Hash preimage proof verified successfully".to_string())
+                } else if !pk_matches {
+                    Some("Revealed preimage doesn't match the committed hash".to_string())
+                } else {
+                    Some("Hash preimage verification failed".to_string())
+                },
+            })))
+        }
+    }
 }

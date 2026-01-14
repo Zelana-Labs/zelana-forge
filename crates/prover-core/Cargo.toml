@@ -13,6 +13,8 @@ ark-std.workspace = true
 ark-serialize.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+subtle.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 ark-std.workspace = true

@@ -6,6 +6,22 @@ use crate::serde_utils::{deserialize_fr, deserialize_g1, serialize_fr, serialize
 use prover_core::{Fr, G1Affine};
 use serde::{Deserialize, Serialize};
 
+/// Circuit type for the proof system
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CircuitType {
+    /// Schnorr signature circuit (prove knowledge of discrete log)
+    Schnorr,
+    /// Hash preimage circuit (prove knowledge of hash preimage)
+    HashPreimage,
+}
+
+impl Default for CircuitType {
+    fn default() -> Self {
+        CircuitType::Schnorr
+    }
+}
+
 /// Share assignment message sent from coordinator to node during setup
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareAssignment {
@@ -207,6 +223,152 @@ pub struct HealthResponse {
     pub ready: bool,
 }
 
+// ============================================================================
+// Privacy-Preserving Blind Proving Messages
+// ============================================================================
+
+/// Witness commitment for privacy-preserving proving
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WitnessCommitment {
+    /// Commitment hash (SHA-256 of public_witness || salt)
+    #[serde(with = "hex::serde")]
+    pub hash: [u8; 32],
+
+    /// Session ID for tracking
+    pub session_id: String,
+}
+
+/// Blind share assignment (no public witness revealed to prover)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindShareAssignment {
+    /// Node ID (1-indexed)
+    pub node_id: u32,
+
+    /// Share index (x-coordinate)
+    pub share_index: u32,
+
+    /// Share value (y-coordinate)
+    #[serde(serialize_with = "serialize_fr", deserialize_with = "deserialize_fr")]
+    pub share_value: Fr,
+
+    /// Generator point for the proof system
+    #[serde(serialize_with = "serialize_g1", deserialize_with = "deserialize_g1")]
+    pub generator: G1Affine,
+
+    /// Witness commitment (NOT the actual public witness)
+    pub witness_commitment: WitnessCommitment,
+
+    /// Circuit type being proven
+    pub circuit_type: CircuitType,
+}
+
+/// Setup request with witness commitment (privacy-preserving)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindSetupRequest {
+    /// Circuit type to prove
+    pub circuit_type: CircuitType,
+
+    /// Commitment to the public witness
+    pub witness_commitment: WitnessCommitment,
+
+    /// Secret to share (in hex format)
+    pub secret: String,
+}
+
+/// Blind setup response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindSetupResponse {
+    /// Generator point
+    #[serde(serialize_with = "serialize_g1", deserialize_with = "deserialize_g1")]
+    pub generator: G1Affine,
+
+    /// Witness commitment (echo back)
+    pub witness_commitment: WitnessCommitment,
+
+    /// Number of nodes in the system
+    pub num_nodes: usize,
+
+    /// Threshold required for proofs
+    pub threshold: usize,
+
+    /// Session ID for this blind proving session
+    pub session_id: String,
+}
+
+/// Blind proof (proof with commitment, no witness revealed)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindProof {
+    /// Witness commitment
+    pub witness_commitment: WitnessCommitment,
+
+    /// Aggregated commitment
+    #[serde(serialize_with = "serialize_g1", deserialize_with = "deserialize_g1")]
+    pub commitment: G1Affine,
+
+    /// Challenge (computed from witness_commitment, not witness)
+    #[serde(serialize_with = "serialize_fr", deserialize_with = "deserialize_fr")]
+    pub challenge: Fr,
+
+    /// Aggregated response
+    #[serde(serialize_with = "serialize_fr", deserialize_with = "deserialize_fr")]
+    pub response: Fr,
+
+    /// Generator used
+    #[serde(serialize_with = "serialize_g1", deserialize_with = "deserialize_g1")]
+    pub generator: G1Affine,
+
+    /// Public key (g^secret) for verification
+    #[serde(serialize_with = "serialize_g1", deserialize_with = "deserialize_g1")]
+    pub public_key: G1Affine,
+
+    /// Circuit type
+    pub circuit_type: CircuitType,
+}
+
+/// Blind prove request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindProveRequest {
+    /// Session ID from blind setup
+    pub session_id: String,
+}
+
+/// Blind prove response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlindProveResponse {
+    /// The blind proof
+    pub blind_proof: BlindProof,
+
+    /// Number of nodes that participated
+    pub participants: usize,
+}
+
+/// Verification request with witness reveal
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyWithRevealRequest {
+    /// The blind proof to verify
+    pub blind_proof: BlindProof,
+
+    /// Revealed public witness (hex-encoded)
+    pub public_witness: String,
+
+    /// Salt used in commitment (hex-encoded)
+    #[serde(with = "hex::serde")]
+    pub salt: [u8; 32],
+}
+
+/// Verification response for blind proofs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyWithRevealResponse {
+    /// Whether the proof is valid
+    pub valid: bool,
+
+    /// Whether the commitment matches (witness reveal is correct)
+    pub commitment_valid: bool,
+
+    /// Optional error message
+    pub message: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +488,148 @@ mod tests {
         let json = serde_json::to_string(&error).unwrap();
         let recovered: ApiResponse<String> = serde_json::from_str(&json).unwrap();
         assert!(recovered.is_error());
+    }
+
+    #[test]
+    fn test_witness_commitment_serialization() {
+        let commitment = WitnessCommitment {
+            hash: [42u8; 32],
+            session_id: "test-session".to_string(),
+        };
+
+        let json = serde_json::to_string(&commitment).unwrap();
+        let recovered: WitnessCommitment = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(commitment.hash, recovered.hash);
+        assert_eq!(commitment.session_id, recovered.session_id);
+    }
+
+    #[test]
+    fn test_blind_share_assignment_serialization() {
+        use ark_ec::CurveGroup;
+        use prover_core::G1Projective;
+        let mut rng = test_rng();
+
+        let witness_commitment = WitnessCommitment {
+            hash: [42u8; 32],
+            session_id: "test-session".to_string(),
+        };
+
+        let msg = BlindShareAssignment {
+            node_id: 1,
+            share_index: 1,
+            share_value: Fr::rand(&mut rng),
+            generator: G1Projective::rand(&mut rng).into_affine(),
+            witness_commitment: witness_commitment.clone(),
+            circuit_type: CircuitType::Schnorr,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let recovered: BlindShareAssignment = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(msg.node_id, recovered.node_id);
+        assert_eq!(msg.share_value, recovered.share_value);
+        assert_eq!(msg.generator, recovered.generator);
+        assert_eq!(msg.witness_commitment, recovered.witness_commitment);
+    }
+
+    #[test]
+    fn test_blind_setup_request_response() {
+        use ark_ec::CurveGroup;
+        use prover_core::G1Projective;
+        let mut rng = test_rng();
+
+        let witness_commitment = WitnessCommitment {
+            hash: [42u8; 32],
+            session_id: "test-session".to_string(),
+        };
+
+        let req = BlindSetupRequest {
+            circuit_type: CircuitType::Schnorr,
+            witness_commitment: witness_commitment.clone(),
+            secret: "deadbeef".to_string(),
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        let recovered: BlindSetupRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req.witness_commitment, recovered.witness_commitment);
+
+        let resp = BlindSetupResponse {
+            generator: G1Projective::rand(&mut rng).into_affine(),
+            witness_commitment: witness_commitment.clone(),
+            num_nodes: 5,
+            threshold: 3,
+            session_id: "test-session".to_string(),
+        };
+
+        let json = serde_json::to_string(&resp).unwrap();
+        let recovered: BlindSetupResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp.witness_commitment, recovered.witness_commitment);
+        assert_eq!(resp.session_id, recovered.session_id);
+    }
+
+    #[test]
+    fn test_blind_proof_serialization() {
+        use ark_ec::CurveGroup;
+        use prover_core::G1Projective;
+        let mut rng = test_rng();
+
+        let witness_commitment = WitnessCommitment {
+            hash: [42u8; 32],
+            session_id: "test-session".to_string(),
+        };
+
+        let proof = BlindProof {
+            witness_commitment,
+            commitment: G1Projective::rand(&mut rng).into_affine(),
+            challenge: Fr::rand(&mut rng),
+            response: Fr::rand(&mut rng),
+            generator: G1Projective::rand(&mut rng).into_affine(),
+            public_key: G1Projective::rand(&mut rng).into_affine(),
+            circuit_type: CircuitType::Schnorr,
+        };
+
+        let json = serde_json::to_string(&proof).unwrap();
+        let recovered: BlindProof = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(proof.witness_commitment, recovered.witness_commitment);
+        assert_eq!(proof.commitment, recovered.commitment);
+        assert_eq!(proof.challenge, recovered.challenge);
+        assert_eq!(proof.response, recovered.response);
+        assert_eq!(proof.public_key, recovered.public_key);
+    }
+
+    #[test]
+    fn test_verify_with_reveal_request() {
+        use ark_ec::CurveGroup;
+        use prover_core::G1Projective;
+        let mut rng = test_rng();
+
+        let witness_commitment = WitnessCommitment {
+            hash: [42u8; 32],
+            session_id: "test-session".to_string(),
+        };
+
+        let blind_proof = BlindProof {
+            witness_commitment,
+            commitment: G1Projective::rand(&mut rng).into_affine(),
+            challenge: Fr::rand(&mut rng),
+            response: Fr::rand(&mut rng),
+            generator: G1Projective::rand(&mut rng).into_affine(),
+            public_key: G1Projective::rand(&mut rng).into_affine(),
+            circuit_type: CircuitType::Schnorr,
+        };
+
+        let req = VerifyWithRevealRequest {
+            blind_proof,
+            public_witness: "deadbeef".to_string(),
+            salt: [99u8; 32],
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        let recovered: VerifyWithRevealRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(req.public_witness, recovered.public_witness);
+        assert_eq!(req.salt, recovered.salt);
     }
 }

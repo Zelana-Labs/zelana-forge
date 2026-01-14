@@ -1,15 +1,24 @@
-//! # Prover Node
+//! # Privacy-Preserving Prover Node
 //!
-//! HTTP server that holds a secret share and participates in distributed proof generation.
+//! HTTP server that holds a secret share and participates in distributed proof generation
+//! WITHOUT ever seeing the public witness.
 //!
 //! ## Endpoints
 //!
 //! - `GET /health` - Health check
-//! - `POST /share` - Receive share assignment from coordinator
+//! - `POST /share` - Receive blind share assignment from coordinator
 //! - `POST /commitment` - Generate commitment for proof session
 //! - `POST /fragment` - Generate proof fragment given challenge
 
-use ark_std::test_rng;
+use prover_core::rand::rngs::StdRng;
+use prover_core::rand::SeedableRng;
+
+/// Create a cryptographically secure RNG seeded from OS entropy
+fn secure_rng() -> StdRng {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).expect("Failed to get random bytes from OS");
+    StdRng::from_seed(seed)
+}
 
 use axum::{
     extract::State,
@@ -21,7 +30,7 @@ use clap::Parser;
 use prover_core::{schnorr::Commitment, Fr, G1Affine, SecretShare};
 use prover_network::{
     ApiResponse, CommitmentRequest, CommitmentResponse, FragmentRequest, FragmentResponse,
-    HealthResponse, ShareAssignment,
+    HealthResponse, BlindShareAssignment, WitnessCommitment, CircuitType,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -31,7 +40,7 @@ use tracing::{info, warn};
 /// Command-line arguments
 #[derive(Parser, Debug)]
 #[command(name = "prover-node")]
-#[command(about = "Distributed prover node", long_about = None)]
+#[command(about = "Privacy-preserving distributed prover node", long_about = None)]
 struct Args {
     /// Node ID (must be unique)
     #[arg(long, env = "NODE_ID")]
@@ -58,11 +67,11 @@ struct NodeState {
     /// Generator point
     generator: Option<G1Affine>,
 
-    /// Public key
-    public_key: Option<G1Affine>,
-
     /// Session commitments (session_id -> commitment)
     session_commitments: HashMap<String, Commitment>,
+
+    /// Blind sessions (session_id -> (witness_commitment, circuit_type))
+    blind_sessions: HashMap<String, (WitnessCommitment, CircuitType)>,
 }
 
 type SharedState = Arc<RwLock<NodeState>>;
@@ -80,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     info!(
-        "Starting prover node {} on {}:{}",
+        "Starting privacy-preserving prover node {} on {}:{}",
         args.node_id, args.host, args.port
     );
 
@@ -89,14 +98,14 @@ async fn main() -> anyhow::Result<()> {
         node_id: args.node_id,
         share: None,
         generator: None,
-        public_key: None,
         session_commitments: HashMap::new(),
+        blind_sessions: HashMap::new(),
     }));
 
-    // Build router
+    // Build router (only blind proving endpoints)
     let app = Router::new()
         .route("/health", get(health_handler))
-        .route("/share", post(share_handler))
+        .route("/share", post(blind_share_handler))
         .route("/commitment", post(commitment_handler))
         .route("/fragment", post(fragment_handler))
         .layer(TraceLayer::new_for_http())
@@ -125,17 +134,17 @@ async fn health_handler(State(state): State<SharedState>) -> Json<ApiResponse<He
     }))
 }
 
-/// Share assignment handler
-async fn share_handler(
+/// Blind share assignment handler (privacy-preserving - no public key/witness revealed)
+async fn blind_share_handler(
     State(state): State<SharedState>,
-    Json(assignment): Json<ShareAssignment>,
+    Json(assignment): Json<BlindShareAssignment>,
 ) -> Result<Json<ApiResponse<String>>, StatusCode> {
     let mut node_state = state.write().await;
 
     // Validate node ID matches
     if assignment.node_id != node_state.node_id {
         warn!(
-            "Received share for node {} but we are node {}",
+            "Received blind share for node {} but we are node {}",
             assignment.node_id, node_state.node_id
         );
         return Ok(Json(ApiResponse::error(format!(
@@ -152,15 +161,23 @@ async fn share_handler(
     });
 
     node_state.generator = Some(assignment.generator);
-    node_state.public_key = Some(assignment.public_key);
+
+    // Store blind session info (commitment + circuit type, NO public witness!)
+    node_state.blind_sessions.insert(
+        assignment.witness_commitment.session_id.clone(),
+        (assignment.witness_commitment.clone(), assignment.circuit_type),
+    );
 
     info!(
-        "Node {} received share (index: {})",
-        node_state.node_id, assignment.share_index
+        "🔒 Node {} received BLIND share (index: {}, circuit: {:?}, commitment: {:?})",
+        node_state.node_id,
+        assignment.share_index,
+        assignment.circuit_type,
+        hex::encode(&assignment.witness_commitment.hash[..8])
     );
 
     Ok(Json(ApiResponse::success(format!(
-        "Share assigned to node {}",
+        "Blind share assigned to node {} (public witness HIDDEN)",
         node_state.node_id
     ))))
 }
@@ -187,7 +204,7 @@ async fn commitment_handler(
         }
     };
 
-    let mut rng = test_rng();
+    let mut rng = secure_rng();
     let commitment = Commitment::generate(node_state.node_id as usize, &generator, &mut rng);
 
     let commitment_point = commitment.point;
@@ -198,7 +215,7 @@ async fn commitment_handler(
         .insert(request.session_id.clone(), commitment);
 
     info!(
-        "Node {} generated commitment for session {}",
+        "Node {} generated commitment for session {} (WITNESS HIDDEN)",
         node_state.node_id, request.session_id
     );
 
@@ -244,7 +261,7 @@ async fn fragment_handler(
     let response = commitment.nonce() + (request.challenge * share.y);
 
     info!(
-        "Node {} generated fragment for session {}",
+        "Node {} generated fragment for session {} (WITNESS STILL HIDDEN)",
         node_state.node_id, request.session_id
     );
 

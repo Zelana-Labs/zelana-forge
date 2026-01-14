@@ -10,4 +10,7 @@
 pub mod messages;
 pub mod serde_utils;
 
+#[cfg(test)]
+mod serialization_test;
+
 pub use messages::*;

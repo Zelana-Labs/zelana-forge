@@ -28,5 +28,7 @@ ark-ec.workspace = true
 ark-ff.workspace = true
 hex.workspace = true
 
+getrandom.workspace = true
+
 [dev-dependencies]
 ark-std.workspace = true
