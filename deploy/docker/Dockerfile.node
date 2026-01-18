@@ -1,18 +1,4 @@
 # Dockerfile for prover-node
-FROM rust:1.87 as builder
-
-WORKDIR /app
-
-# Copy workspace files
-COPY Cargo.toml ./Cargo.toml
-COPY af_xdp ./af_xdp
-COPY prover ./prover
-COPY crates ./crates
-
-# Build the node binary
-RUN cargo build --release -p prover-node
-
-# Runtime stage
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
@@ -20,7 +6,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/prover-node /usr/local/bin/prover-node
+# Copy pre-built binary from host
+COPY target/release/prover-node /usr/local/bin/prover-node
 
 EXPOSE 8080
 
