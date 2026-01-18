@@ -232,7 +232,6 @@ export default function InteractiveDashboard() {
         {/* Center Content - Workflow */}
         <div className="flex-1 bg-bg-primary overflow-y-auto">
           <WorkflowPanel
-            systemReady={systemReady}
             coordinatorRunning={coordinatorRunning}
             onLog={addLog}
           />

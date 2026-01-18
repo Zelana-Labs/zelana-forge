@@ -72,6 +72,14 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
       const timestamp = timestampMatch ? timestampMatch[1] : '';
       const level = levelMatch ? levelMatch[1].toUpperCase() : 'INFO';
 
+      // Extract message part after level
+      let message = cleanLine;
+      if (levelMatch && levelMatch.index !== undefined) {
+        message = cleanLine.substring(levelMatch.index + levelMatch[0].length).trim();
+        // Remove common prefixes like "prover_coordinator:"
+        message = message.replace(/^[^:]+:\s*/, '');
+      }
+
       let icon = 'ℹ';
       let colorClass = 'text-accent-blue';
 
@@ -86,7 +94,7 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
         colorClass = 'text-accent-green';
       }
 
-      return { line: cleanLine, timestamp, level, icon, colorClass, key: idx };
+      return { line: message, timestamp, level, icon, colorClass, key: idx };
     });
   };
 
@@ -201,7 +209,7 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
       </div>
 
       {/* Docker Containers & Logs - Combined Card */}
-      <div className="bg-bg-tertiary rounded-lg p-4">
+    
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-sm font-semibold text-text-primary">🐳 Container Logs</h3>
           <div className="flex gap-2">
@@ -227,31 +235,19 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
           </div>
         </div>
 
-        {/* Container Selection Tabs */}
-        <div className="flex gap-1 mb-3 p-1 bg-bg-primary rounded-lg overflow-x-auto">
-          <button
-            onClick={() => setSelectedContainer('coordinator')}
-            className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all duration-200 whitespace-nowrap ${
-              selectedContainer === 'coordinator'
-                ? 'bg-accent-purple text-white shadow-md'
-                : 'text-text-secondary hover:text-text-primary hover:bg-bg-secondary'
-            }`}
-          >
-            <span>🎯</span>
-            <span>Coordinator</span>
-          </button>
-          {[1, 2, 3, 4, 5].map((nodeId) => (
+        {/* Container Selection */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {(['coordinator', 'node1', 'node2', 'node3', 'node4', 'node5'] as const).map((container) => (
             <button
-              key={nodeId}
-              onClick={() => setSelectedContainer(`node${nodeId}`)}
-              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-all duration-200 whitespace-nowrap ${
-                selectedContainer === `node${nodeId}`
-                  ? 'bg-accent-blue text-white shadow-md'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-secondary'
+              key={container}
+              onClick={() => setSelectedContainer(container)}
+              className={`px-1 py-1.5 text-xs rounded-lg font-medium transition-all duration-200 ${
+                selectedContainer === container
+                  ? 'bg-accent-blue text-white shadow-lg'
+                  : 'bg-bg-tertiary text-text-secondary hover:bg-bg-primary'
               }`}
             >
-              <span>🖥️</span>
-              <span>N{nodeId}</span>
+              {container === 'coordinator' ? 'Coordinator' : `Node ${container.slice(4)}`}
             </button>
           ))}
         </div>
@@ -296,7 +292,7 @@ export default function LogViewer({ logs, nodes, onClearLogs }: LogViewerProps) 
             </div>
           )}
         </div>
-      </div>
+   
 
       {/* Container Log Modal */}
       {showModal && (

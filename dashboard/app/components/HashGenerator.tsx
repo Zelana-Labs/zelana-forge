@@ -21,7 +21,7 @@ export default function HashGenerator() {
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       const hashHex = '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       setHash(hashHex);
-    } catch (err) {
+      } catch {
       setHash('Error generating hash');
     }
   };
@@ -99,9 +99,9 @@ export default function HashGenerator() {
               <div className="text-xs font-semibold text-accent-blue mb-1">How to use</div>
               <ul className="text-[10px] text-text-secondary space-y-1">
                 <li>• Enter your secret text as input</li>
-                <li>• Click "Generate Hash" to compute SHA-256</li>
+                 <li>• Click &quot;Generate Hash&quot; to compute SHA-256</li>
                 <li>• Copy the hash to use as public input</li>
-                <li>• Use the original text as private witness</li>
+                 <li>• Use the original text as private &quot;witness&quot;</li>
               </ul>
             </div>
           </div>
