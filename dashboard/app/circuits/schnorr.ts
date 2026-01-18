@@ -28,6 +28,7 @@ export const schnorrCircuit: CircuitHandler = {
       placeholder: '0123456789abcdef... (64 chars hex, leave empty for random)',
       type: 'hex',
       isPrivate: true,
+      defaultValue: 'abc123', // Demo key
       helpText: 'Will be split using Shamir\'s Secret Sharing. Never leaves the system.',
       validation: {
         maxLength: 64,
