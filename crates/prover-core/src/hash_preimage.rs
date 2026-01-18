@@ -2,7 +2,7 @@ use ark_bn254::{Fr, G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use crate::errors::ProverError;
 use crate::shamir::lagrange_coefficient;
@@ -79,7 +79,8 @@ pub fn generate_challenge(
 
     // Hash generator
     let mut gen_bytes = Vec::new();
-    generator.serialize_compressed(&mut gen_bytes)
+    generator
+        .serialize_compressed(&mut gen_bytes)
         .map_err(|e| ProverError::SerializationError(e.to_string()))?;
     hasher.update(&gen_bytes);
 
@@ -89,7 +90,9 @@ pub fn generate_challenge(
     // Hash all commitments
     for commitment in commitments {
         let mut commit_bytes = Vec::new();
-        commitment.value.serialize_compressed(&mut commit_bytes)
+        commitment
+            .value
+            .serialize_compressed(&mut commit_bytes)
             .map_err(|e| ProverError::SerializationError(e.to_string()))?;
         hasher.update(&commit_bytes);
     }
@@ -99,9 +102,7 @@ pub fn generate_challenge(
 }
 
 /// Aggregate commitments using Lagrange interpolation
-pub fn aggregate_commitments(
-    commitments: &[HashCommitment],
-) -> Result<G1Affine, ProverError> {
+pub fn aggregate_commitments(commitments: &[HashCommitment]) -> Result<G1Affine, ProverError> {
     if commitments.is_empty() {
         return Err(ProverError::InsufficientFragments { needed: 1, got: 0 });
     }

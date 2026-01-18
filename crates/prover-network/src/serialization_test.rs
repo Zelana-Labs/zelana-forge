@@ -2,20 +2,17 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::{BlindProof, WitnessCommitment, CircuitType};
-    use prover_core::{Fr, G1Affine, G1Projective};
+    use crate::{BlindProof, CircuitType, WitnessCommitment};
     use ark_ec::CurveGroup;
     use ark_std::{test_rng, UniformRand};
+    use prover_core::{Fr, G1Projective};
 
     #[test]
     fn test_blind_proof_serialization_roundtrip() {
         let mut rng = test_rng();
 
         // Create a BlindProof with random values
-        let witness_commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let witness_commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let original_proof = BlindProof {
             witness_commitment,
@@ -39,7 +36,8 @@ mod tests {
         println!("\nSerialized JSON:\n{}", json);
 
         // Deserialize back
-        let recovered_proof: BlindProof = serde_json::from_str(&json).expect("Deserialization should succeed");
+        let recovered_proof: BlindProof =
+            serde_json::from_str(&json).expect("Deserialization should succeed");
 
         println!("\nRecovered proof:");
         println!("  commitment: {:?}", recovered_proof.commitment);
@@ -48,11 +46,26 @@ mod tests {
         println!("  generator: {:?}", recovered_proof.generator);
 
         // Check equality
-        assert_eq!(original_proof.commitment, recovered_proof.commitment, "Commitment mismatch");
-        assert_eq!(original_proof.challenge, recovered_proof.challenge, "Challenge mismatch");
-        assert_eq!(original_proof.response, recovered_proof.response, "Response mismatch");
-        assert_eq!(original_proof.generator, recovered_proof.generator, "Generator mismatch");
-        assert_eq!(original_proof.public_key, recovered_proof.public_key, "Public key mismatch");
+        assert_eq!(
+            original_proof.commitment, recovered_proof.commitment,
+            "Commitment mismatch"
+        );
+        assert_eq!(
+            original_proof.challenge, recovered_proof.challenge,
+            "Challenge mismatch"
+        );
+        assert_eq!(
+            original_proof.response, recovered_proof.response,
+            "Response mismatch"
+        );
+        assert_eq!(
+            original_proof.generator, recovered_proof.generator,
+            "Generator mismatch"
+        );
+        assert_eq!(
+            original_proof.public_key, recovered_proof.public_key,
+            "Public key mismatch"
+        );
 
         println!("\n✅ All fields match after serialization round-trip!");
     }
@@ -78,12 +91,14 @@ mod tests {
         }"#;
 
         use crate::VerifyWithRevealRequest;
-        let request: VerifyWithRevealRequest = serde_json::from_str(json)
-            .expect("Should parse verify request");
+        let request: VerifyWithRevealRequest =
+            serde_json::from_str(json).expect("Should parse verify request");
 
         println!("Parsed VerifyWithRevealRequest:");
-        println!("  witness_commitment.hash: {:?}", hex::encode(&request.blind_proof.witness_commitment.hash));
-        println!("  witness_commitment.session_id: {}", request.blind_proof.witness_commitment.session_id);
+        println!(
+            "  witness_commitment.hash: {:?}",
+            hex::encode(&request.blind_proof.witness_commitment.hash)
+        );
         println!("  commitment: {:?}", request.blind_proof.commitment);
         println!("  challenge: {}", request.blind_proof.challenge);
         println!("  response: {}", request.blind_proof.response);

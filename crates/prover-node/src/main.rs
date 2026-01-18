@@ -29,8 +29,8 @@ use axum::{
 use clap::Parser;
 use prover_core::{schnorr::Commitment, Fr, G1Affine, SecretShare};
 use prover_network::{
-    ApiResponse, CommitmentRequest, CommitmentResponse, FragmentRequest, FragmentResponse,
-    HealthResponse, BlindShareAssignment, WitnessCommitment, CircuitType,
+    ApiResponse, BlindShareAssignment, CircuitType, CommitmentRequest, CommitmentResponse,
+    FragmentRequest, FragmentResponse, HealthResponse, WitnessCommitment,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -164,8 +164,11 @@ async fn blind_share_handler(
 
     // Store blind session info (commitment + circuit type, NO public witness!)
     node_state.blind_sessions.insert(
-        assignment.witness_commitment.session_id.clone(),
-        (assignment.witness_commitment.clone(), assignment.circuit_type),
+        assignment.session_id.clone(),
+        (
+            assignment.witness_commitment.clone(),
+            assignment.circuit_type,
+        ),
     );
 
     info!(

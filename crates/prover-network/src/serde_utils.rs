@@ -124,7 +124,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, SerializationError> {
 
     // Create reverse lookup table
     let mut decode_table = [0xFF; 256];
-    for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".iter().enumerate() {
+    for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        .iter()
+        .enumerate()
+    {
         decode_table[c as usize] = i as u8;
     }
 
@@ -138,7 +141,9 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, SerializationError> {
         let c4 = decode_table[input[i + 3] as usize];
 
         if c1 == 0xFF || c2 == 0xFF {
-            return Err(SerializationError::Base64Error("Invalid character".to_string()));
+            return Err(SerializationError::Base64Error(
+                "Invalid character".to_string(),
+            ));
         }
 
         result.push((c1 << 2) | (c2 >> 4));

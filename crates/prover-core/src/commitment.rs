@@ -15,10 +15,10 @@
 //! - **Binding**: SHA-256 collision resistance prevents commitment equivocation
 //! - **Privacy**: No prover learns public_witness until verification phase
 
-use sha2::{Digest, Sha256};
 use ark_bn254::{Fr, G1Affine};
-use ark_serialize::CanonicalSerialize;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
+use sha2::{Digest, Sha256};
 
 use crate::errors::ProverError;
 

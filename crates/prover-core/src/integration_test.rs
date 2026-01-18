@@ -6,14 +6,16 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        commitment::{commit_witness, verify_commitment, generate_challenge_from_commitment, WitnessCommitment, SALT_SIZE},
-        shamir::{share_secret, lagrange_coefficient},
+        commitment::{
+            commit_witness, generate_challenge_from_commitment, verify_commitment, SALT_SIZE,
+        },
         schnorr::Commitment,
-        Fr, G1Affine, G1Projective,
+        shamir::{lagrange_coefficient, share_secret},
+        Fr, G1Projective,
     };
     use ark_ec::CurveGroup;
     use ark_ff::PrimeField;
-    use ark_std::{test_rng, Zero, UniformRand};
+    use ark_std::{test_rng, UniformRand, Zero};
 
     /// Full integration test of the distributed Schnorr protocol
     #[test]
@@ -33,7 +35,10 @@ mod tests {
         let public_witness = b"my_custom_proof_message";
         let salt = [99u8; SALT_SIZE];
         let witness_commitment = commit_witness(public_witness, &salt);
-        println!("Witness commitment: {:?}", hex::encode(&witness_commitment.hash[..8]));
+        println!(
+            "Witness commitment: {:?}",
+            hex::encode(&witness_commitment.hash[..8])
+        );
 
         // 3. Generate random generator
         let generator = G1Projective::rand(&mut rng).into_affine();
@@ -56,7 +61,10 @@ mod tests {
         let mut node_commitments: Vec<(u32, Commitment)> = Vec::new();
         for share in &share_set.shares {
             let commitment = Commitment::generate(share.index, &generator, &mut rng);
-            println!("Node {} commitment: C_{} = g^r_{}", share.index, share.index, share.index);
+            println!(
+                "Node {} commitment: C_{} = g^r_{}",
+                share.index, share.index, share.index
+            );
             node_commitments.push((share.index as u32, commitment));
         }
 
@@ -70,13 +78,19 @@ mod tests {
             .map(|(id, _)| Fr::from(*id as u64))
             .collect();
 
-        println!("x_coords: {:?}", x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        println!(
+            "x_coords: {:?}",
+            x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+        );
 
         // Aggregate commitments using Lagrange
         let mut agg_commitment = G1Projective::zero();
         for (i, (node_id, commitment)) in node_commitments.iter().enumerate() {
             let coeff = lagrange_coefficient(&x_coords, i);
-            println!("Node {} (x={}): Lagrange coeff = {}", node_id, node_id, coeff);
+            println!(
+                "Node {} (x={}): Lagrange coeff = {}",
+                node_id, node_id, coeff
+            );
             agg_commitment += G1Projective::from(commitment.point) * coeff;
         }
         let agg_commitment_affine = agg_commitment.into_affine();
@@ -89,7 +103,8 @@ mod tests {
             &witness_commitment,
             &agg_commitment_affine,
             session_id,
-        ).expect("Challenge generation should succeed");
+        )
+        .expect("Challenge generation should succeed");
         println!("Challenge: {}", challenge);
 
         println!("\n=== PHASE 3: FRAGMENT GENERATION ===");
@@ -100,8 +115,10 @@ mod tests {
             let share = &share_set.shares[i];
             // response = nonce + challenge * share
             let response = commitment.nonce() + (challenge * share.y);
-            println!("Node {} response: z_{} = r_{} + c * s_{} = {}",
-                node_id, node_id, node_id, node_id, response);
+            println!(
+                "Node {} response: z_{} = r_{} + c * s_{} = {}",
+                node_id, node_id, node_id, node_id, response
+            );
             fragments.push((*node_id, response));
         }
 
@@ -120,7 +137,10 @@ mod tests {
         let mut agg_response = Fr::zero();
         for (i, (node_id, response)) in fragments.iter().enumerate() {
             let coeff = lagrange_coefficient(&x_coords, i);
-            println!("Node {} fragment: coeff * z_{} = {} * {}", node_id, node_id, coeff, response);
+            println!(
+                "Node {} fragment: coeff * z_{} = {} * {}",
+                node_id, node_id, coeff, response
+            );
             agg_response += *response * coeff;
         }
         println!("Aggregated response: {}", agg_response);
@@ -129,7 +149,10 @@ mod tests {
 
         // Step 1: Verify commitment
         let commitment_valid = verify_commitment(public_witness, &salt, &witness_commitment);
-        println!("Commitment verification: {}", if commitment_valid { "PASS" } else { "FAIL" });
+        println!(
+            "Commitment verification: {}",
+            if commitment_valid { "PASS" } else { "FAIL" }
+        );
         assert!(commitment_valid, "Commitment should verify");
 
         // Step 2: Verify Schnorr equation: g^z == C * PK^c
@@ -140,7 +163,10 @@ mod tests {
         println!("RHS (C * PK^c): {:?}", rhs);
 
         let proof_valid = lhs == rhs;
-        println!("Schnorr verification: {}", if proof_valid { "PASS" } else { "FAIL" });
+        println!(
+            "Schnorr verification: {}",
+            if proof_valid { "PASS" } else { "FAIL" }
+        );
 
         // Debug: Let's verify the math step by step
         if !proof_valid {
@@ -174,10 +200,14 @@ mod tests {
             let mut expected_agg_commitment = G1Projective::zero();
             for (i, (_, commitment)) in node_commitments.iter().enumerate() {
                 let coeff = lagrange_coefficient(&x_coords, i);
-                expected_agg_commitment += G1Projective::from(generator) * (commitment.nonce() * coeff);
+                expected_agg_commitment +=
+                    G1Projective::from(generator) * (commitment.nonce() * coeff);
             }
             let expected_agg_commitment_affine = expected_agg_commitment.into_affine();
-            println!("Expected agg commitment from nonces: {:?}", expected_agg_commitment_affine);
+            println!(
+                "Expected agg commitment from nonces: {:?}",
+                expected_agg_commitment_affine
+            );
             println!("Actual agg commitment: {:?}", agg_commitment_affine);
         }
 
@@ -197,7 +227,9 @@ mod tests {
         let share_set = share_secret(secret, 3, 3, &mut rng);
 
         // Reconstruct using Lagrange
-        let x_coords: Vec<Fr> = share_set.shares.iter()
+        let x_coords: Vec<Fr> = share_set
+            .shares
+            .iter()
             .map(|s| Fr::from(s.index as u64))
             .collect();
 
@@ -207,7 +239,10 @@ mod tests {
             reconstructed += share.y * coeff;
         }
 
-        assert_eq!(secret, reconstructed, "Lagrange reconstruction should recover secret");
+        assert_eq!(
+            secret, reconstructed,
+            "Lagrange reconstruction should recover secret"
+        );
     }
 
     /// Test basic Schnorr proof without distribution

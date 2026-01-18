@@ -12,10 +12,10 @@
 //! - `POST /cluster/restart/:container` - Restart specific container
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
@@ -209,10 +209,14 @@ async fn start_cluster_handler(
                     info!("Cluster startup warnings: {}", stderr);
                 }
                 Ok(Json(ApiResponse::success(
-                    "Cluster started successfully. Check container status in a few seconds.".to_string(),
+                    "Cluster started successfully. Check container status in a few seconds."
+                        .to_string(),
                 )))
             } else {
-                error!("Failed to start cluster. Exit code: {:?}", output.status.code());
+                error!(
+                    "Failed to start cluster. Exit code: {:?}",
+                    output.status.code()
+                );
                 error!("Stderr: {}", stderr);
                 error!("Stdout: {}", stdout);
 
@@ -291,7 +295,8 @@ async fn logs_handler(
         .arg(app_state.compose_dir.join("docker-compose.yml"))
         .arg("logs")
         .arg("--tail")
-        .arg("100")
+        .arg("20")
+        .arg("--no-color")
         .arg(&container)
         .output()
         .await;

@@ -5,15 +5,15 @@
 //! - Any `t` parties can collaborate to produce a valid proof
 //! - The proof is zero-knowledge (verifier learns nothing about the secret)
 
-use crate::shamir::{lagrange_coefficient, SecretShare};
 use crate::errors::*;
+use crate::shamir::{lagrange_coefficient, SecretShare};
 use ark_bn254::{Fr, G1Affine, G1Projective};
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
+use ark_std::Zero;
 use sha2::{Digest, Sha256};
-use ark_std::{Zero};
 
 /// Public parameters for the proof system
 #[derive(Clone, Debug)]
@@ -29,13 +29,19 @@ impl PublicParams {
     pub fn new<R: Rng>(secret: Fr, rng: &mut R) -> Self {
         let generator = G1Projective::rand(rng).into_affine();
         let public_key = (generator * secret).into_affine();
-        Self { generator, public_key }
+        Self {
+            generator,
+            public_key,
+        }
     }
 
     /// Create from existing generator with a secret
     pub fn from_generator(generator: G1Affine, secret: Fr) -> Self {
         let public_key = (generator * secret).into_affine();
-        Self { generator, public_key }
+        Self {
+            generator,
+            public_key,
+        }
     }
 }
 
@@ -55,7 +61,11 @@ impl Commitment {
     pub fn generate<R: Rng>(node_id: usize, generator: &G1Affine, rng: &mut R) -> Self {
         let nonce = Fr::rand(rng);
         let point = (*generator * nonce).into_affine();
-        Self { node_id, point, nonce }
+        Self {
+            node_id,
+            point,
+            nonce,
+        }
     }
 
     /// Get the nonce (only for the node that created it)
@@ -78,7 +88,10 @@ pub struct ProofFragment {
 impl ProofFragment {
     /// Create a proof fragment
     pub fn create(share: &SecretShare, commitment: &Commitment, challenge: Fr) -> Self {
-        assert_eq!(share.index, commitment.node_id, "Share and commitment must be from same node");
+        assert_eq!(
+            share.index, commitment.node_id,
+            "Share and commitment must be from same node"
+        );
 
         let response = commitment.nonce + (challenge * share.y);
 
@@ -155,18 +168,23 @@ pub fn generate_challenge(
 
     // Hash generator
     let mut buf = Vec::new();
-    generator.serialize_compressed(&mut buf).expect("Serialization should not fail");
+    generator
+        .serialize_compressed(&mut buf)
+        .expect("Serialization should not fail");
     hasher.update(&buf);
 
     // Hash public key
     buf.clear();
-    public_key.serialize_compressed(&mut buf).expect("Serialization should not fail");
+    public_key
+        .serialize_compressed(&mut buf)
+        .expect("Serialization should not fail");
     hasher.update(&buf);
 
     // Hash all commitments
     for comm in commitments {
         buf.clear();
-        comm.serialize_compressed(&mut buf).expect("Serialization should not fail");
+        comm.serialize_compressed(&mut buf)
+            .expect("Serialization should not fail");
         hasher.update(&buf);
     }
 
@@ -197,7 +215,8 @@ mod tests {
 
         // Phase 2: Generate challenge
         let commitment_points: Vec<G1Affine> = commitments.iter().map(|c| c.point).collect();
-        let challenge = generate_challenge(&params.generator, &params.public_key, &commitment_points);
+        let challenge =
+            generate_challenge(&params.generator, &params.public_key, &commitment_points);
 
         // Phase 3: Generate fragments
         let fragments: Vec<ProofFragment> = share_set.shares[0..3]
@@ -222,11 +241,7 @@ mod tests {
         let share_set = share_secret(secret, 7, 4, &mut rng);
 
         // Test with different subsets of 4 nodes
-        let subsets = vec![
-            vec![0, 1, 2, 3],
-            vec![1, 3, 4, 6],
-            vec![0, 2, 4, 6],
-        ];
+        let subsets = vec![vec![0, 1, 2, 3], vec![1, 3, 4, 6], vec![0, 2, 4, 6]];
 
         for indices in subsets {
             let shares: Vec<_> = indices.iter().map(|&i| &share_set.shares[i]).collect();
@@ -237,7 +252,8 @@ mod tests {
                 .collect();
 
             let commitment_points: Vec<G1Affine> = commitments.iter().map(|c| c.point).collect();
-            let challenge = generate_challenge(&params.generator, &params.public_key, &commitment_points);
+            let challenge =
+                generate_challenge(&params.generator, &params.public_key, &commitment_points);
 
             let fragments: Vec<ProofFragment> = shares
                 .iter()
@@ -246,7 +262,11 @@ mod tests {
                 .collect();
 
             let proof = DistributedProof::aggregate(&fragments, challenge).unwrap();
-            assert!(proof.verify(&params), "Proof should verify for subset {:?}", indices);
+            assert!(
+                proof.verify(&params),
+                "Proof should verify for subset {:?}",
+                indices
+            );
         }
     }
 }

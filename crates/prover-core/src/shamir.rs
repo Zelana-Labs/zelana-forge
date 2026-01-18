@@ -56,7 +56,10 @@ pub fn share_secret<R: Rng>(secret: Fr, n: usize, t: usize, rng: &mut R) -> Shar
         })
         .collect();
 
-    ShareSet { shares, threshold: t }
+    ShareSet {
+        shares,
+        threshold: t,
+    }
 }
 
 /// Reconstruct the secret from shares using Lagrange interpolation
@@ -87,7 +90,10 @@ pub fn lagrange_coefficient(x_coords: &[Fr], i: usize) -> Fr {
         }
     }
 
-    numerator * denominator.inverse().expect("Denominator should be non-zero")
+    numerator
+        * denominator
+            .inverse()
+            .expect("Denominator should be non-zero")
 }
 
 /// Lagrange interpolation to find f(0)
