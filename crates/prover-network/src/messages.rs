@@ -3,7 +3,7 @@
 //! Defines all message types used for communication between coordinator and nodes.
 
 use crate::serde_utils::{deserialize_fr, deserialize_g1, serialize_fr, serialize_g1};
-use prover_core::{Fr, G1Affine, G1Projective};
+use prover_core::{Fr, G1Affine};
 use serde::{Deserialize, Serialize};
 
 /// Circuit type for the proof system
@@ -367,7 +367,7 @@ pub struct VerifyWithRevealResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_std::{test_rng, UniformRand};
+    use ark_std::{UniformRand, test_rng};
 
     #[test]
     fn test_share_assignment_serialization() {

@@ -12,10 +12,10 @@
 //! - `POST /cluster/restart/:container` - Restart specific container
 
 use axum::{
-    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
