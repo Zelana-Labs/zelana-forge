@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the distributed prover system to Kubernetes
+# Deploy the distributed prover system to Kubernetes with optional dashboard
 
 set -e
 
@@ -7,10 +7,41 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DEPLOY_DIR="$PROJECT_ROOT/deploy/k8s"
 
+# Parse arguments
+DEPLOY_DASHBOARD=false
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --with-dashboard)
+      DEPLOY_DASHBOARD=true
+      shift
+      ;;
+    --help)
+      echo "Usage: $0 [options]"
+      echo ""
+      echo "Deploy Zelana Forge distributed ZK proof system to Kubernetes"
+      echo ""
+      echo "Options:"
+      echo "  --with-dashboard    Also deploy the official Kubernetes Dashboard"
+      echo "  --help             Show this help message"
+      echo ""
+      echo "Examples:"
+      echo "  $0                    # Deploy Zelana Forge only"
+      echo "  $0 --with-dashboard   # Deploy Zelana Forge + Dashboard"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Use --help for usage information"
+      exit 1
+      ;;
+  esac
+done
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Function to check if command exists
@@ -18,7 +49,12 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-echo "==> Deploying Zelana Prover to Kubernetes"
+if [ "$DEPLOY_DASHBOARD" = true ]; then
+    echo "==> Deploying Zelana Prover + Kubernetes Dashboard to Kubernetes"
+else
+    echo "==> Deploying Zelana Prover to Kubernetes"
+fi
+echo "Use --with-dashboard to also deploy the official Kubernetes Dashboard"
 echo ""
 
 # Check prerequisites
@@ -109,18 +145,99 @@ kubectl get services -n zelana-prover
 echo ""
 
 # Coordinator info
+# Deploy dashboard if requested
+if [ "$DEPLOY_DASHBOARD" = true ]; then
+    echo ""
+    echo -e "${BLUE}==> Deploying Kubernetes Dashboard...${NC}"
+    echo ""
+
+    # Deploy the official dashboard
+    echo "📦 Applying recommended dashboard manifests..."
+    kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+
+    # Wait for deployment
+    echo "⏳ Waiting for dashboard to be ready..."
+    kubectl wait --for=condition=available --timeout=300s deployment/kubernetes-dashboard -n kubernetes-dashboard || {
+        echo -e "${YELLOW}Warning: Dashboard deployment may still be in progress${NC}"
+    }
+
+    # Create admin service account
+    echo "🔐 Creating admin service account..."
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kubernetes-dashboard
+EOF
+
+    echo -e "${GREEN}✓ Dashboard deployed${NC}"
+fi
+
+echo ""
 echo -e "${GREEN}==> Deployment complete!${NC}"
 echo ""
-echo "To access the coordinator:"
-echo "  kubectl port-forward -n zelana-prover svc/coordinator 8080:8080"
+
+# Show deployment status
+echo "==> Zelana Forge Status"
 echo ""
-echo "Then test with:"
+echo "Pods:"
+kubectl get pods -n zelana-prover
+echo ""
+echo "Services:"
+kubectl get services -n zelana-prover
+
+if [ "$DEPLOY_DASHBOARD" = true ]; then
+    echo ""
+    echo "==> Dashboard Status"
+    echo ""
+    echo "Dashboard Pods:"
+    kubectl get pods -n kubernetes-dashboard
+    echo ""
+    echo "Dashboard Services:"
+    kubectl get services -n kubernetes-dashboard
+fi
+
+echo ""
+echo "🚀 Access Instructions:"
+echo ""
+echo "Zelana Forge Coordinator:"
+echo "  kubectl port-forward -n zelana-prover svc/coordinator 8080:8080"
 echo "  curl http://localhost:8080/health"
 echo ""
-echo "To view logs:"
+
+if [ "$DEPLOY_DASHBOARD" = true ]; then
+    echo "Kubernetes Dashboard:"
+    echo "  kubectl proxy"
+    echo "  Visit: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"
+    echo "  Login token: kubectl -n kubernetes-dashboard create token admin-user"
+    echo ""
+    echo "Or use the access script:"
+    echo "  ./deploy/k8s/access-dashboard.sh"
+    echo ""
+fi
+
+echo "View Logs:"
 echo "  kubectl logs -n zelana-prover -l app=coordinator"
 echo "  kubectl logs -n zelana-prover -l app=prover-node"
 echo ""
-echo "To delete the deployment:"
+
+echo "Delete Deployment:"
 echo "  kubectl delete -k $DEPLOY_DIR"
+if [ "$DEPLOY_DASHBOARD" = true ]; then
+    echo "  kubectl delete -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml"
+fi
 echo ""
