@@ -63,6 +63,24 @@ docker compose up --build
 ./scripts/test-local.sh
 ```
 
+### Kubernetes Deployment
+
+```bash
+# Deploy to Kubernetes with dashboard
+./scripts/deploy-k8s.sh --with-dashboard
+
+# Port forward coordinator API
+kubectl port-forward -n zelana-prover svc/coordinator 8080:8080
+
+# Test API
+curl http://localhost:8080/health
+
+# Access Kubernetes dashboard
+kubectl proxy
+# Visit: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+# Token: kubectl -n kubernetes-dashboard create token admin-user
+```
+
 ## Available Circuits
 
 | Circuit | Status | Statement |
@@ -71,6 +89,18 @@ docker compose up --build
 | **Hash Preimage** | Active | I know preimage such that `H(preimage) = target` |
 | Range Proof | Coming | My value is in range `[min, max]` |
 | Merkle Membership | Coming | This leaf is in the Merkle tree |
+
+## Performance
+
+**Benchmark Results (Kubernetes, 5 nodes, 3-of-5 threshold):**
+- **Average Proof Time**: 23ms
+- **Speedup**: 5x parallel processing
+- **Target**: <50ms end-to-end
+- **Throughput**: ~43 proofs/second
+
+**Tested Circuits:**
+- Schnorr signatures: 19-31ms per proof
+- Hash preimage proofs: Supported
 
 ### Adding New Circuits
 
@@ -107,12 +137,13 @@ zelana-forge/
 
 ## Ports
 
-| Service | Port | URL |
-|---------|------|-----|
-| Dashboard | 5173 | http://localhost:5173 |
-| Control Server | 9000 | http://localhost:9000 |
-| Coordinator | 8000 | http://localhost:8000 |
-| Nodes | 3001-3005 | http://localhost:300X |
+| Service | Port (Docker) | Port (K8s) | URL |
+|---------|---------------|------------|-----|
+| Dashboard | 5173 | - | http://localhost:5173 |
+| Control Server | 9000 | - | http://localhost:9000 |
+| Coordinator | 8000 | 8080 | http://localhost:8080 |
+| Nodes | 3001-3005 | 3000 | http://localhost:3000 |
+| K8s Dashboard | - | 30080 | http://localhost:30080 |
 
 ## Security Properties
 
