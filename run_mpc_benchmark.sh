@@ -26,6 +26,9 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+# Benchmark timing
+START_TIME=$(date +%s%3N)
+
 # Function to check if services are running
 check_services() {
     echo "🔍 Checking if services are running..."
@@ -138,9 +141,14 @@ run_mpc_benchmark() {
     echo "  Witness: $WITNESS"
     echo ""
 
+    # Initialize phase timing
+    PHASE_TIMES=""
+
     # Step 1: Setup - Distribute secret to nodes
     echo "🔧 Phase 0: Setting up distributed proving session"
     echo "------------------------------------------------"
+
+    SETUP_START=$(date +%s%3N)
 
     # Salt for commitment (32 bytes of zeros)
     SALT_HEX="0000000000000000000000000000000000000000000000000000000000000000"
@@ -161,7 +169,7 @@ run_mpc_benchmark() {
    "secret": "$SECRET"
  }
 EOF
-)
+ )
 
     setup_response=$(timed_curl "$COORDINATOR_URL/setup" "POST" "$SETUP_DATA" "Sending setup request to coordinator")
     if [ $? -ne 0 ]; then
@@ -181,12 +189,18 @@ EOF
     threshold=$(echo "$setup_response" | jq -r '.data.threshold' 2>/dev/null || echo "3")
     num_nodes=$(echo "$setup_response" | jq -r '.data.num_nodes' 2>/dev/null || echo "5")
 
+    SETUP_END=$(date +%s%3N)
+    SETUP_TIME=$((SETUP_END - SETUP_START))
+    PHASE_TIMES="$PHASE_TIMES\n   🔧 Setup: ${SETUP_TIME}ms"
+
     echo "   📊 Configuration: $threshold-of-$num_nodes threshold"
     echo ""
 
     # Step 2: Prove - Generate distributed proof
     echo "🔒 Phase 1-3: Generating distributed proof (PARALLEL)"
     echo "-----------------------------------------------------"
+
+    PROVE_START=$(date +%s%3N)
 
     PROVE_DATA=$(cat <<EOF
 {
@@ -205,17 +219,11 @@ EOF
     echo "   👥 Participants: $participants nodes collaborated"
 
     # Extract proof data for verification
-    echo "   Debug: prove_response start: ${prove_response:0:200}..."
     proof_data=$(echo "$prove_response" | jq -r '.data.blind_proof' 2>/dev/null)
-    echo "   Debug: jq result: '$proof_data'"
     if [ -z "$proof_data" ] || [ "$proof_data" = "null" ]; then
         echo -e "${RED}   ❌ Could not extract proof data from prove response${NC}"
-        echo "   Debug: full prove_response: $prove_response"
         exit 1
     fi
-    echo "   📋 Proof data extracted for verification"
-    echo "   Debug: proof_data length: ${#proof_data}"
-    echo "   Debug: proof_data full: $proof_data"
     commitment=$(echo "$proof_data" | jq -r '.commitment' 2>/dev/null)
     challenge=$(echo "$proof_data" | jq -r '.challenge' 2>/dev/null)
     response=$(echo "$proof_data" | jq -r '.response' 2>/dev/null)
@@ -230,20 +238,20 @@ EOF
     echo "      Challenge: 924zpi3CY6BDtBgcdE4gXP/x3uOl5e/5..."
     echo "      Response: Iu/e1uWUuQTR6XcVFBEQQR4RV7Yiyv0m..."
 
+    PROVE_END=$(date +%s%3N)
+    PROVE_TIME=$((PROVE_END - PROVE_START))
+    PHASE_TIMES="$PHASE_TIMES\n   🔒 Prove: ${PROVE_TIME}ms"
+
     # Step 3: Verify - Test the proof
     echo "✅ Phase 4: Verifying the distributed proof"
     echo "------------------------------------------"
 
+    VERIFY_START=$(date +%s%3N)
+
     # Send the witness for verification
     VERIFY_DATA="{\"blind_proof\": $proof_data, \"public_witness\": \"$proof_witness_hash\", \"salt\": \"0000000000000000000000000000000000000000000000000000000000000000\"}"
 
-    echo "🔍 Raw verify request:"
-    echo "$VERIFY_DATA"
-    echo ""
-
     verify_response=$(timed_curl "$COORDINATOR_URL/verify" "POST" "$VERIFY_DATA" "Verifying the distributed proof")
-
-    echo "   Debug: Raw verify_response: '$verify_response'"
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}Verification failed${NC}"
@@ -256,6 +264,10 @@ EOF
         echo "   Response: $verify_response"
         exit 1
     fi
+
+    VERIFY_END=$(date +%s%3N)
+    VERIFY_TIME=$((VERIFY_END - VERIFY_START))
+    PHASE_TIMES="$PHASE_TIMES\n   ✅ Verify: ${VERIFY_TIME}ms"
 
     valid=$(echo "$verify_response" | jq -r '.data.valid' 2>/dev/null)
     commitment_valid=$(echo "$verify_response" | jq -r '.data.commitment_valid' 2>/dev/null)
@@ -414,6 +426,18 @@ EOF
 check_services
 run_mpc_benchmark
 
+# Calculate benchmark stats
+END_TIME=$(date +%s%3N)
+TOTAL_TIME=$((END_TIME - START_TIME))
+
 echo ""
+echo -e "${YELLOW}🏁 BENCHMARK RESULTS:${NC}"
+echo -e "${CYAN}   ⏱️  Total execution time: ${TOTAL_TIME}ms${NC}"
+echo -e "${CYAN}   👥 Nodes participated: ${participants:-3}${NC}"
+echo -e "${CYAN}   🔒 Threshold: ${threshold:-3}-of-${num_nodes:-5}${NC}"
+echo -e "${CYAN}   ⚡ Operations per second: ~$((1000 * 4 / TOTAL_TIME)) ops/s${NC}"
+echo -e "${CYAN}   📊 Phase breakdown:${NC}$PHASE_TIMES"
+echo ""
+
 echo -e "${GREEN}Final MPC Verify Result:${NC}"
 echo -e "${BLUE}$verify_response${NC}"
