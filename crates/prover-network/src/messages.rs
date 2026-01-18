@@ -3,23 +3,18 @@
 //! Defines all message types used for communication between coordinator and nodes.
 
 use crate::serde_utils::{deserialize_fr, deserialize_g1, serialize_fr, serialize_g1};
-use prover_core::{Fr, G1Affine};
+use prover_core::{Fr, G1Affine, G1Projective};
 use serde::{Deserialize, Serialize};
 
 /// Circuit type for the proof system
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum CircuitType {
     /// Schnorr signature circuit (prove knowledge of discrete log)
+    #[default]
     Schnorr,
     /// Hash preimage circuit (prove knowledge of hash preimage)
     HashPreimage,
-}
-
-impl Default for CircuitType {
-    fn default() -> Self {
-        CircuitType::Schnorr
-    }
 }
 
 /// Share assignment message sent from coordinator to node during setup
@@ -233,14 +228,14 @@ pub struct WitnessCommitment {
     /// Commitment hash (SHA-256 of public_witness || salt)
     #[serde(with = "hex::serde")]
     pub hash: [u8; 32],
-
-    /// Session ID for tracking
-    pub session_id: String,
 }
 
 /// Blind share assignment (no public witness revealed to prover)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlindShareAssignment {
+    /// Session ID for this blind proving session
+    pub session_id: String,
+
     /// Node ID (1-indexed)
     pub node_id: u32,
 
@@ -492,30 +487,22 @@ mod tests {
 
     #[test]
     fn test_witness_commitment_serialization() {
-        let commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let json = serde_json::to_string(&commitment).unwrap();
         let recovered: WitnessCommitment = serde_json::from_str(&json).unwrap();
 
         assert_eq!(commitment.hash, recovered.hash);
-        assert_eq!(commitment.session_id, recovered.session_id);
     }
 
     #[test]
     fn test_blind_share_assignment_serialization() {
-        use ark_ec::CurveGroup;
-        use prover_core::G1Projective;
         let mut rng = test_rng();
 
-        let witness_commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let witness_commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let msg = BlindShareAssignment {
+            session_id: "test-session".to_string(),
             node_id: 1,
             share_index: 1,
             share_value: Fr::rand(&mut rng),
@@ -539,10 +526,7 @@ mod tests {
         use prover_core::G1Projective;
         let mut rng = test_rng();
 
-        let witness_commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let witness_commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let req = BlindSetupRequest {
             circuit_type: CircuitType::Schnorr,
@@ -574,10 +558,7 @@ mod tests {
         use prover_core::G1Projective;
         let mut rng = test_rng();
 
-        let witness_commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let witness_commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let proof = BlindProof {
             witness_commitment,
@@ -605,10 +586,7 @@ mod tests {
         use prover_core::G1Projective;
         let mut rng = test_rng();
 
-        let witness_commitment = WitnessCommitment {
-            hash: [42u8; 32],
-            session_id: "test-session".to_string(),
-        };
+        let witness_commitment = WitnessCommitment { hash: [42u8; 32] };
 
         let blind_proof = BlindProof {
             witness_commitment,

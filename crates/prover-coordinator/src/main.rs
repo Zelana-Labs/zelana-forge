@@ -18,11 +18,11 @@
 //! 5. **Phase 4**: Aggregate into blind proof
 //! 6. **Verification**: Client reveals witness, verifier checks commitment + proof
 
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
-use ark_std::{Zero, UniformRand};
 use ark_std::rand::rngs::StdRng;
 use ark_std::rand::SeedableRng;
+use ark_std::Zero;
 
 /// Create a cryptographically secure RNG seeded from OS entropy
 fn secure_rng() -> StdRng {
@@ -38,17 +38,15 @@ use axum::{
 };
 use clap::Parser;
 use prover_core::{
-    shamir::{share_secret, lagrange_coefficient},
-    Fr, G1Affine, G1Projective,
-    verify_commitment, generate_challenge_from_commitment,
-    WitnessCommitment as CoreWitnessCommitment,
+    generate_challenge_from_commitment,
+    shamir::{lagrange_coefficient, share_secret},
+    verify_commitment, Fr, G1Affine, G1Projective, WitnessCommitment as CoreWitnessCommitment,
 };
 use prover_network::{
-    ApiResponse, CommitmentRequest, CommitmentResponse, FragmentRequest, FragmentResponse,
-    HealthResponse, BlindSetupRequest, BlindSetupResponse, BlindShareAssignment,
-    BlindProveRequest, BlindProveResponse, BlindProof,
-    VerifyWithRevealRequest, VerifyWithRevealResponse,
-    WitnessCommitment, CircuitType,
+    ApiResponse, BlindProof, BlindProveRequest, BlindProveResponse, BlindSetupRequest,
+    BlindSetupResponse, BlindShareAssignment, CircuitType, CommitmentRequest, CommitmentResponse,
+    FragmentRequest, FragmentResponse, HealthResponse, VerifyWithRevealRequest,
+    VerifyWithRevealResponse, WitnessCommitment,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -100,21 +98,19 @@ struct CoordinatorState {
 
 /// Blind proving session data (privacy-preserving)
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct BlindSessionData {
-    /// Witness commitment
+    session_id: String,
     witness_commitment: WitnessCommitment,
-    /// Generator point
     generator: G1Affine,
-    /// Public key (computed from secret during setup)
     public_key: G1Affine,
-    /// Circuit type
     circuit_type: CircuitType,
-    /// Share distribution (for visualization)
     shares: Vec<ShareInfo>,
 }
 
 /// Share information for visualization
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ShareInfo {
     /// Node ID
     pub node_id: u32,
@@ -193,16 +189,21 @@ async fn health_handler(State(state): State<SharedState>) -> Json<ApiResponse<He
     }))
 }
 
-/// Blind setup handler - sets up system with witness commitment (no witness revealed)
+/// Blind setup handler - sets up system with witness commitment (privacy-preserving)
 async fn blind_setup_handler(
     State(state): State<SharedState>,
     Json(request): Json<BlindSetupRequest>,
 ) -> Result<Json<ApiResponse<BlindSetupResponse>>, StatusCode> {
-    let mut coord_state = state.write().await;
-
     info!(
         "🔒 Blind setup for circuit {:?} with commitment {:?}",
-        request.circuit_type,
+        request.circuit_type, request.witness_commitment.hash
+    );
+
+    let mut coord_state = state.write().await;
+
+    // Generate session ID from commitment hash
+    let session_id = format!(
+        "session-{}",
         hex::encode(&request.witness_commitment.hash[..8])
     );
 
@@ -215,36 +216,27 @@ async fn blind_setup_handler(
     let secret = Fr::from_le_bytes_mod_order(&secret_bytes);
 
     // Generate generator
-    let mut rng = secure_rng();
-    let generator = G1Projective::rand(&mut rng).into_affine();
-
-    // Compute public key: PK = g^secret (needed for verification)
+    let generator = G1Affine::generator();
     let public_key = (G1Projective::from(generator) * secret).into_affine();
 
     let num_nodes = coord_state.node_urls.len();
     let threshold = coord_state.threshold;
 
-    // Split secret into shares using Shamir's Secret Sharing
-    let share_set = share_secret(secret, num_nodes, threshold, &mut rng);
+    // Generate shares
+    let mut rng = secure_rng();
+    let shares = share_secret(secret, num_nodes, threshold, &mut rng);
 
-    let mut share_infos = Vec::new();
-
-    // Distribute BLIND shares to nodes (no public witness/key revealed)
-    for (i, share) in share_set.shares.iter().enumerate() {
-        let node_url = &coord_state.node_urls[i];
+    // Distribute shares to nodes
+    for (i, node_url) in coord_state.node_urls.iter().enumerate() {
         let assignment = BlindShareAssignment {
+            session_id: session_id.clone(),
             node_id: (i + 1) as u32,
-            share_index: share.index as u32,
-            share_value: share.y,
+            share_index: (i + 1) as u32,
+            share_value: shares.shares[i].y,
             generator,
             witness_commitment: request.witness_commitment.clone(),
             circuit_type: request.circuit_type,
         };
-
-        share_infos.push(ShareInfo {
-            node_id: (i + 1) as u32,
-            share_index: share.index as u32,
-        });
 
         match coord_state
             .client
@@ -255,31 +247,37 @@ async fn blind_setup_handler(
         {
             Ok(response) => {
                 if response.status().is_success() {
-                    info!("✅ Assigned blind share to node {} at {}", i + 1, node_url);
+                    info!("✅ Assigned blind share to node {}", i + 1);
                 } else {
                     error!(
-                        "❌ Failed to assign blind share to node {}: {}",
+                        "❌ Node {} rejected share assignment: {}",
                         i + 1,
                         response.status()
                     );
                 }
             }
-            Err(e) => {
-                error!("❌ Failed to contact node {} at {}: {}", i + 1, node_url, e);
-            }
+            Err(e) => error!("❌ Failed to contact node {} at {}: {}", i + 1, node_url, e),
         }
     }
 
     // Store blind session data
-    let session_id = request.witness_commitment.session_id.clone();
     coord_state.blind_sessions.insert(
         session_id.clone(),
         BlindSessionData {
+            session_id: session_id.clone(),
             witness_commitment: request.witness_commitment.clone(),
             generator,
             public_key,
             circuit_type: request.circuit_type,
-            shares: share_infos,
+            shares: shares
+                .shares
+                .iter()
+                .enumerate()
+                .map(|(i, _)| ShareInfo {
+                    node_id: (i + 1) as u32,
+                    share_index: (i + 1) as u32,
+                })
+                .collect(),
         },
     );
 
@@ -304,21 +302,22 @@ async fn blind_prove_handler(
 ) -> Result<Json<ApiResponse<BlindProveResponse>>, StatusCode> {
     let coord_state = state.read().await;
 
-    info!("🔒 Starting blind proof generation for session: {}", request.session_id);
-
-    // Get blind session data
+    // Get session data
     let session_data = match coord_state.blind_sessions.get(&request.session_id) {
         Some(data) => data,
         None => {
-            warn!("Unknown blind session: {}", request.session_id);
-            return Ok(Json(ApiResponse::error(
-                "Unknown session. Call /setup first",
-            )));
+            return Ok(Json(ApiResponse::error(format!(
+                "Session {} not found",
+                request.session_id
+            ))));
         }
     };
 
     // Phase 1: Collect commitments from threshold nodes
-    info!("Phase 1: Collecting commitments from {} nodes", coord_state.threshold);
+    info!(
+        "Phase 1: Collecting commitments from {} nodes",
+        coord_state.threshold
+    );
     let commitment_request = CommitmentRequest {
         session_id: request.session_id.clone(),
     };
@@ -377,14 +376,19 @@ async fn blind_prove_handler(
         .map(|r| Fr::from(r.node_id as u64))
         .collect();
 
-    info!("📊 Commitment x_coords (sorted by node_id): {:?}",
-        x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+    info!(
+        "📊 Commitment x_coords (sorted by node_id): {:?}",
+        x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+    );
 
     // Aggregate commitments using Lagrange
     let mut agg_commitment = G1Projective::zero();
     for (i, resp) in commitment_responses.iter().enumerate() {
         let coeff = lagrange_coefficient(&x_coords, i);
-        info!("📊 Node {} (x={}): Lagrange coeff = {}", resp.node_id, resp.node_id, coeff);
+        info!(
+            "📊 Node {} (x={}): Lagrange coeff = {}",
+            resp.node_id, resp.node_id, coeff
+        );
         agg_commitment += G1Projective::from(resp.commitment) * coeff;
     }
     let agg_commitment_affine = agg_commitment.into_affine();
@@ -398,12 +402,16 @@ async fn blind_prove_handler(
         &core_commitment,
         &agg_commitment_affine,
         &request.session_id,
-    ).map_err(|e| {
+    )
+    .map_err(|e| {
         error!("Failed to generate challenge: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    info!("🔒 Challenge computed from commitment: {:?}", hex::encode(&challenge.to_string()[..16]));
+    info!(
+        "🔒 Challenge computed from commitment: {:?}",
+        hex::encode(&challenge.to_string()[..16])
+    );
 
     // Phase 3: Collect proof fragments
     info!("Phase 3: Collecting fragments");
@@ -463,7 +471,10 @@ async fn blind_prove_handler(
 
     // Debug: Log all fragment responses
     for resp in &fragment_responses {
-        info!("📊 Fragment response node {}: response = {}", resp.node_id, resp.response);
+        info!(
+            "📊 Fragment response node {}: response = {}",
+            resp.node_id, resp.response
+        );
     }
 
     // Build x_coords from fragment responses (should match commitment x_coords)
@@ -472,16 +483,30 @@ async fn blind_prove_handler(
         .map(|r| Fr::from(r.node_id as u64))
         .collect();
 
-    info!("📊 Fragment x_coords (sorted by node_id): {:?}",
-        fragment_x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+    info!(
+        "📊 Fragment x_coords (sorted by node_id): {:?}",
+        fragment_x_coords
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+    );
 
     // Verify same nodes participated in both phases
     if x_coords != fragment_x_coords {
         error!("❌ Node mismatch between commitment and fragment phases!");
-        error!("Commitment nodes: {:?}", x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
-        error!("Fragment nodes: {:?}", fragment_x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        error!(
+            "Commitment nodes: {:?}",
+            x_coords.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+        );
+        error!(
+            "Fragment nodes: {:?}",
+            fragment_x_coords
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+        );
         return Ok(Json(ApiResponse::error(
-            "Different nodes responded in commitment vs fragment phase".to_string()
+            "Different nodes responded in commitment vs fragment phase".to_string(),
         )));
     }
 
@@ -489,7 +514,10 @@ async fn blind_prove_handler(
 
     for (i, fragment_resp) in fragment_responses.iter().enumerate() {
         let coeff = lagrange_coefficient(&x_coords, i);
-        info!("📊 Node {} fragment: Lagrange coeff = {}, response applied", fragment_resp.node_id, coeff);
+        info!(
+            "📊 Node {} fragment: Lagrange coeff = {}, response applied",
+            fragment_resp.node_id, coeff
+        );
         agg_response += fragment_resp.response * coeff;
     }
 
@@ -612,7 +640,7 @@ async fn verify_with_reveal_handler(
         CircuitType::HashPreimage => {
             // For hash preimage: verify g^z = C · g^(c * hash_to_field(SHA256(preimage)))
             // The secret shared was hash_to_field(SHA256(preimage)), so we need to recompute it
-            use prover_core::{hash_to_field, compute_sha256};
+            use prover_core::{compute_sha256, hash_to_field};
 
             // First compute SHA256 of the revealed preimage
             let preimage_hash = compute_sha256(&public_witness_bytes);
@@ -620,7 +648,10 @@ async fn verify_with_reveal_handler(
             let secret_field = hash_to_field(&preimage_hash);
 
             info!("📊 Hash Preimage verification:");
-            info!("  Preimage (revealed): {} bytes", public_witness_bytes.len());
+            info!(
+                "  Preimage (revealed): {} bytes",
+                public_witness_bytes.len()
+            );
             info!("  SHA256(preimage): {}", hex::encode(&preimage_hash));
             info!("  hash_to_field result: {}", secret_field);
 
